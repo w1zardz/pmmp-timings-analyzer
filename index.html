@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+    <title>PocketMine Timings Analyzer - PMMP Server Performance Tool</title>
+    <meta name="description" content="Free online tool to analyze PocketMine-MP server timings. Detect lag sources, GC spikes, plugin bottlenecks, entity overhead. Mobile-friendly. Works with timings.pmmp.io reports.">
+    <meta name="keywords" content="PocketMine, PMMP, timings, analyzer, server performance, Minecraft Bedrock, Pocket Edition, lag, TPS, plugin, bottleneck, PMP, MCBE, Bedrock Edition, server optimization">
+    <meta name="author" content="KripMine">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://kripmine.github.io/pmmp-timings-analyzer/">
+
+    <!-- Yandex -->
+    <meta name="yandex-verification" content="">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:locale:alternate" content="ru_RU">
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="PocketMine Timings Analyzer">
+    <meta property="og:description" content="Detect lag sources, GC spikes, plugin bottlenecks in your PocketMine-MP server. Free, mobile-friendly, no install needed.">
+    <meta property="og:url" content="https://kripmine.github.io/pmmp-timings-analyzer/">
+    <meta property="og:site_name" content="PMMP Timings Analyzer">
+    <meta property="og:image" content="https://kripmine.github.io/pmmp-timings-analyzer/og-image.png">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="PocketMine Timings Analyzer">
+    <meta name="twitter:description" content="Free tool to analyze PocketMine-MP server performance. Detect lag, GC spikes, plugin issues.">
+
+    <!-- Schema.org -->
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "PocketMine Timings Analyzer",
+        "description": "Free online tool to analyze PocketMine-MP server timings and detect performance bottlenecks",
+        "url": "https://kripmine.github.io/pmmp-timings-analyzer/",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Any",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "author": { "@type": "Organization", "name": "KripMine" }
+    }
+    </script>
+
+    <!-- Preload critical CSS -->
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9889;</text></svg>">
+</head>
+<body>
+    <!-- Hero / Input Section -->
+    <header class="hero" id="hero">
+        <div class="container">
+            <h1 class="hero__title">&#9889; PMMP Timings Analyzer</h1>
+            <p class="hero__sub">Detect lag sources, GC spikes &amp; plugin bottlenecks in your <strong>PocketMine-MP</strong> server</p>
+
+            <div class="input-group">
+                <div class="input-tabs">
+                    <button class="tab active" data-tab="paste">Paste Text</button>
+                    <button class="tab" data-tab="url">From URL</button>
+                    <button class="tab" data-tab="file">Upload File</button>
+                </div>
+
+                <div class="tab-panel active" id="tab-paste">
+                    <textarea id="timings-text" placeholder="Paste your raw timings text here...&#10;&#10;Get it from: timings.pmmp.io → your report → add &amp;raw=1 to URL&#10;Or use /timings paste in-game" rows="6" spellcheck="false"></textarea>
+                </div>
+
+                <div class="tab-panel" id="tab-url">
+                    <input type="url" id="timings-url" placeholder="https://timings.pmmp.io/?id=...&access_token=...">
+                    <p class="hint">We'll fetch the raw data automatically. If CORS blocks it, add <code>&amp;raw=1</code> to the URL and paste the text instead.</p>
+                </div>
+
+                <div class="tab-panel" id="tab-file">
+                    <label class="file-drop" id="file-drop">
+                        <input type="file" id="timings-file" accept=".txt,.log,.timings">
+                        <span class="file-drop__text">Tap to select or drop a .txt file</span>
+                    </label>
+                </div>
+
+                <button class="btn-analyze" id="btn-analyze">Analyze Timings</button>
+                <button class="btn-demo" id="btn-demo">Try Demo</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Results -->
+    <main class="results hidden" id="results">
+        <div class="container">
+            <!-- Dashboard -->
+            <section class="section" id="dashboard">
+                <h2 class="section__title">Dashboard</h2>
+                <div class="metrics-grid" id="metrics-grid"></div>
+                <div class="health-bar-wrap">
+                    <div class="health-label">Server Health</div>
+                    <div class="health-bar"><div class="health-bar__fill" id="health-fill"></div></div>
+                    <div class="health-score" id="health-score"></div>
+                </div>
+            </section>
+
+            <!-- Issues -->
+            <section class="section" id="issues-section">
+                <h2 class="section__title">Detected Issues <span class="badge" id="issues-count"></span></h2>
+                <div id="issues-list"></div>
+            </section>
+
+            <!-- Worlds -->
+            <section class="section" id="worlds-section">
+                <h2 class="section__title">World Load Distribution</h2>
+                <div id="worlds-chart"></div>
+            </section>
+
+            <!-- Plugins -->
+            <section class="section" id="plugins-section">
+                <h2 class="section__title">Plugin Impact</h2>
+                <div id="plugins-list"></div>
+            </section>
+
+            <!-- Tree View -->
+            <section class="section" id="tree-section">
+                <h2 class="section__title">Timings Tree</h2>
+                <div class="tree-controls">
+                    <button class="btn-sm" id="btn-expand-all">Expand All</button>
+                    <button class="btn-sm" id="btn-collapse-all">Collapse All</button>
+                    <input type="text" class="tree-search" id="tree-search" placeholder="Filter...">
+                </div>
+                <div class="tree-view" id="tree-view"></div>
+            </section>
+
+            <!-- New Analysis -->
+            <div class="new-analysis">
+                <button class="btn-analyze" id="btn-new">New Analysis</button>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <p>Made for the <strong>PocketMine-MP</strong> community &middot;
+            <a href="https://github.com/kripmine/pmmp-timings-analyzer" target="_blank" rel="noopener">GitHub</a> &middot;
+            <a href="https://timings.pmmp.io" target="_blank" rel="noopener">timings.pmmp.io</a></p>
+            <p class="footer__keywords">PocketMine Timings Viewer &middot; PMMP Performance Analyzer &middot; Minecraft Bedrock Server Optimization &middot; Pocket Edition Server Tool</p>
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
