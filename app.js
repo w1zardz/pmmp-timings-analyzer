@@ -781,7 +781,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 200);
     });
 
-    // URL fetch
+    // URL fetch with CORS proxy fallback
     async function fetchTimings(url) {
         // Normalize URL to raw format
         let rawUrl = url;
@@ -789,19 +789,35 @@ document.addEventListener('DOMContentLoaded', () => {
             rawUrl = url + (url.includes('?') ? '&' : '?') + 'raw=1';
         }
 
+        // Try direct fetch first
         try {
             const resp = await fetch(rawUrl);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-            return await resp.text();
-        } catch (e) {
-            if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError') || e.message.includes('CORS')) {
-                throw new Error(
-                    'Could not fetch timings (likely CORS restriction). ' +
-                    'Open the URL with &raw=1 in your browser, copy all text, and paste it here.'
-                );
-            }
-            throw e;
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const text = await resp.text();
+            if (text.includes('Full Server Tick')) return text;
+        } catch (_) { /* CORS blocked, try proxies */ }
+
+        // CORS proxy fallback list
+        const proxies = [
+            (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+            (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+            (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+        ];
+
+        for (const makeProxy of proxies) {
+            try {
+                const proxyUrl = makeProxy(rawUrl);
+                const resp = await fetch(proxyUrl);
+                if (!resp.ok) continue;
+                const text = await resp.text();
+                if (text.includes('Full Server Tick')) return text;
+            } catch (_) { continue; }
         }
+
+        throw new Error(
+            'Could not fetch timings (CORS restriction + all proxies failed). ' +
+            'Open the URL with &raw=1 in your browser, copy all text, and paste it here.'
+        );
     }
 
     function showError(msg) {
