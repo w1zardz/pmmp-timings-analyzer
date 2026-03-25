@@ -43,7 +43,6 @@
     }
     </script>
 
-    <!-- Preload critical CSS -->
     <link rel="stylesheet" href="style.css">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9889;</text></svg>">
 </head>
@@ -58,22 +57,22 @@
                 <div class="input-tabs">
                     <button class="tab active" data-tab="paste">Paste Text</button>
                     <button class="tab" data-tab="url">From URL</button>
-                    <button class="tab" data-tab="file">Upload File</button>
+                    <button class="tab" data-tab="file">Upload Files</button>
                 </div>
 
                 <div class="tab-panel active" id="tab-paste">
-                    <textarea id="timings-text" placeholder="Paste your raw timings text here...&#10;&#10;Get it from: timings.pmmp.io → your report → add &amp;raw=1 to URL&#10;Or use /timings paste in-game" rows="6" spellcheck="false"></textarea>
+                    <textarea id="timings-text" placeholder="Paste your raw timings text here...&#10;&#10;Multiple reports: separate with a line containing only ===&#10;&#10;Get raw text: timings.pmmp.io → your report → add &amp;raw=1 to URL" rows="6" spellcheck="false"></textarea>
                 </div>
 
                 <div class="tab-panel" id="tab-url">
-                    <input type="url" id="timings-url" placeholder="https://timings.pmmp.io/?id=...&access_token=...">
-                    <p class="hint">We'll fetch the raw data automatically. If CORS blocks it, add <code>&amp;raw=1</code> to the URL and paste the text instead.</p>
+                    <textarea id="timings-url" rows="3" placeholder="https://timings.pmmp.io/?id=...&amp;access_token=...&#10;&#10;One URL per line for batch analysis" spellcheck="false"></textarea>
+                    <p class="hint">We'll fetch raw data automatically via CORS proxy. Paste one URL per line to analyze multiple reports.</p>
                 </div>
 
                 <div class="tab-panel" id="tab-file">
                     <label class="file-drop" id="file-drop">
-                        <input type="file" id="timings-file" accept=".txt,.log,.timings">
-                        <span class="file-drop__text">Tap to select or drop a .txt file</span>
+                        <input type="file" id="timings-file" accept=".txt,.log,.timings" multiple>
+                        <span class="file-drop__text">Tap to select or drop .txt files (multiple supported)</span>
                     </label>
                 </div>
 
@@ -86,45 +85,11 @@
     <!-- Results -->
     <main class="results hidden" id="results">
         <div class="container">
-            <!-- Dashboard -->
-            <section class="section" id="dashboard">
-                <h2 class="section__title">Dashboard</h2>
-                <div class="metrics-grid" id="metrics-grid"></div>
-                <div class="health-bar-wrap">
-                    <div class="health-label">Server Health</div>
-                    <div class="health-bar"><div class="health-bar__fill" id="health-fill"></div></div>
-                    <div class="health-score" id="health-score"></div>
-                </div>
-            </section>
+            <!-- Multi-report tabs (hidden for single report) -->
+            <div class="report-tabs hidden" id="report-tabs"></div>
 
-            <!-- Issues -->
-            <section class="section" id="issues-section">
-                <h2 class="section__title">Detected Issues <span class="badge" id="issues-count"></span></h2>
-                <div id="issues-list"></div>
-            </section>
-
-            <!-- Worlds -->
-            <section class="section" id="worlds-section">
-                <h2 class="section__title">World Load Distribution</h2>
-                <div id="worlds-chart"></div>
-            </section>
-
-            <!-- Plugins -->
-            <section class="section" id="plugins-section">
-                <h2 class="section__title">Plugin Impact</h2>
-                <div id="plugins-list"></div>
-            </section>
-
-            <!-- Tree View -->
-            <section class="section" id="tree-section">
-                <h2 class="section__title">Timings Tree</h2>
-                <div class="tree-controls">
-                    <button class="btn-sm" id="btn-expand-all">Expand All</button>
-                    <button class="btn-sm" id="btn-collapse-all">Collapse All</button>
-                    <input type="text" class="tree-search" id="tree-search" placeholder="Filter...">
-                </div>
-                <div class="tree-view" id="tree-view"></div>
-            </section>
+            <!-- Report containers are generated dynamically -->
+            <div id="reports-container"></div>
 
             <!-- New Analysis -->
             <div class="new-analysis">

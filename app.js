@@ -3,6 +3,7 @@
 /* ============================================================
    PocketMine Timings Analyzer
    Parser → Analyzer → UI
+   Supports multiple timings reports (batch analysis)
    ============================================================ */
 
 // ─── Parser ─────────────────────────────────────────────────
@@ -15,6 +16,7 @@ class TimingsParser {
         let meta = { version: '', engine: '', formatVersion: '', sampleTime: 0, sampleTimeStr: '' };
         const plugins = {};
         let currentPlugin = null;
+        let inAsyncSection = false;
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
@@ -22,7 +24,9 @@ class TimingsParser {
 
             // Footer metadata
             if (line.startsWith('# Version ')) { meta.version = line.slice(10).trim(); continue; }
-            if (line.startsWith('# Obsidian Engine ')) { meta.engine = line.slice(18).trim(); continue; }
+            if (line.startsWith('# Obsidian Engine ') || line.startsWith('# NG-PocketMine-MP ') || line.startsWith('# PocketMine-MP ')) {
+                meta.engine = line.slice(2).trim(); continue;
+            }
             if (line.startsWith('# FormatVersion ')) { meta.formatVersion = line.slice(16).trim(); continue; }
             if (line.startsWith('Sample time ')) {
                 const m = line.match(/Sample time (\d+)\s*\(([^)]+)\)/);
@@ -30,11 +34,22 @@ class TimingsParser {
                 continue;
             }
 
-            // Root marker
-            if (line === 'Minecraft' || line.match(/^Minecraft ThreadId: \d+/)) {
+            // Async thread marker — skip async sections
+            if (line.match(/^Async Thread #?\d+/i) || line.match(/^ThreadId: \d+/) || line === 'Async') {
+                inAsyncSection = true;
                 currentPlugin = null;
                 continue;
             }
+
+            // Root marker — back to main thread
+            if (line === 'Minecraft' || line.match(/^Minecraft ThreadId: \d+/)) {
+                inAsyncSection = false;
+                currentPlugin = null;
+                continue;
+            }
+
+            // Skip async thread entries
+            if (inAsyncSection) continue;
 
             // Plugin header: "PluginName vX.Y.Z" (no indent, no Time: field)
             if (!line.startsWith(' ') && !line.includes(' Time: ') && line.match(/^[\w\\]+\s+v[\d.]+/)) {
@@ -78,7 +93,7 @@ class TimingsParser {
         const content = line.trim();
 
         // Decode HTML entities
-        const decoded = content.replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
+        const decoded = content.replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&').replace(/&#039;/g, "'").replace(/&quot;/g, '"');
 
         // Parse fields
         const timeMatch = decoded.match(/^(.+?)\s+Time:\s*(\d+)\s+Count:\s*(\d+)\s+Avg:\s*([\d.]+)\s+Violations:\s*(\d+)\s+RecordId:\s*(\d+)\s+ParentRecordId:\s*(\d+|none)\s+TimerId:\s*(\d+)\s+Ticks:\s*(\d+)\s+Peak:\s*(\d+)/);
@@ -109,7 +124,7 @@ class TimingsAnalyzer {
         const { nodes, roots, meta, plugins } = parsed;
 
         // Find key entries
-        // Note: parser strips trailing " Time:" field label from names
+        // Note: parser regex (.+?) strips trailing "Time" from names because "Time:" is the field delimiter
         // "Full Server Tick Time: 123" → name="Full Server Tick", time=123
         const fullTick = nodes.find(n => n.name === 'Full Server Tick');
         const updateCycle = nodes.find(n => n.name === 'Server Tick Update Cycle');
@@ -178,9 +193,13 @@ class TimingsAnalyzer {
     }
 
     _analyzeWorlds(nodes, totalTickNs) {
-        const worldTicks = nodes.filter(n =>
-            n.name.match(/^\w[\w\d_]+ - World Tick$/) && n.name !== 'Worlds - World Tick'
-        );
+        // Match world names: anything before " - World Tick" that isn't "Worlds"
+        // World names can contain spaces, dots, hyphens, etc.
+        const worldTicks = nodes.filter(n => {
+            if (!n.name.endsWith(' - World Tick')) return false;
+            const worldName = n.name.replace(' - World Tick', '');
+            return worldName !== 'Worlds' && worldName.length > 0;
+        });
         return worldTicks
             .map(w => ({
                 name: w.name.replace(' - World Tick', ''),
@@ -215,18 +234,24 @@ class TimingsAnalyzer {
     _detectIssues(nodes, fullTick, gcNode, totalTickNs, ticks, avgTickMs) {
         const issues = [];
 
-        // 1. GC spikes
-        if (gcNode && gcNode.avg > 50_000_000) {
+        // 1. GC spikes — lowered threshold to catch moderate issues too
+        if (gcNode) {
             const avgMs = gcNode.avg / 1_000_000;
             const peakMs = gcNode.peak / 1_000_000;
-            issues.push({
-                severity: peakMs > 200 ? 'critical' : 'warning',
-                title: 'Garbage Collector Freezes',
-                body: `GC ran <strong>${gcNode.count}</strong> times, averaging <strong>${avgMs.toFixed(0)}ms</strong> per run with peak <strong>${peakMs.toFixed(0)}ms</strong>. ` +
-                    `This caused <strong>${gcNode.violations}</strong> violations — every GC pass freezes the main thread.`,
-                metrics: [`avg: ${avgMs.toFixed(0)}ms`, `peak: ${peakMs.toFixed(0)}ms`, `runs: ${gcNode.count}`],
-                rec: 'Consider gc_disable() + manual gc_collect_cycles() during low-activity periods (e.g., end of tick when idle). This is a known PHP limitation without JIT.',
-            });
+            const gcPct = (gcNode.time / totalTickNs) * 100;
+
+            if (avgMs > 5 || peakMs > 50 || gcPct > 2) {
+                issues.push({
+                    severity: peakMs > 200 ? 'critical' : (peakMs > 50 || avgMs > 20) ? 'warning' : 'info',
+                    title: 'Garbage Collector Freezes',
+                    body: `GC ran <strong>${gcNode.count}</strong> times, averaging <strong>${avgMs.toFixed(1)}ms</strong> per run with peak <strong>${peakMs.toFixed(0)}ms</strong>. ` +
+                        `Takes <strong>${gcPct.toFixed(1)}%</strong> of tick time. ${gcNode.violations} violations.`,
+                    metrics: [`avg: ${avgMs.toFixed(1)}ms`, `peak: ${peakMs.toFixed(0)}ms`, `runs: ${gcNode.count}`, `${gcPct.toFixed(1)}% of tick`],
+                    rec: avgMs > 20
+                        ? 'GC threshold is too high, allowing roots to accumulate. Reduce GC_THRESHOLD_CAP or call gc_collect_cycles() more frequently with fewer roots.'
+                        : 'Minor GC overhead. Monitor root counts in server logs — if they grow above 10k, consider lowering GC threshold.',
+                });
+            }
         }
 
         // 2. ModalForm lag
@@ -238,7 +263,7 @@ class TimingsAnalyzer {
                 severity: peakMs > 100 ? 'critical' : 'warning',
                 title: 'Slow Form Handler Callbacks',
                 body: `ModalFormResponsePacket handler averages <strong>${avgMs.toFixed(1)}ms</strong> per call (peak <strong>${peakMs.toFixed(0)}ms</strong>, ${formHandler.violations} violations). ` +
-                    `A form callback is doing heavy synchronous work (file I/O, large loops, or chunk loading).`,
+                    `A form callback is doing heavy synchronous work.`,
                 metrics: [`avg: ${avgMs.toFixed(1)}ms`, `peak: ${peakMs.toFixed(0)}ms`, `calls: ${formHandler.count}`],
                 rec: 'Profile which plugin\'s form callback causes this. Move heavy operations to async tasks. Common culprits: database queries, inventory operations, or chunk teleportation inside form callbacks.',
             });
@@ -280,64 +305,141 @@ class TimingsAnalyzer {
             }
         }
 
-        // 5. Network overhead
-        const netRecv = nodes.find(n => n.name === 'Player Network Receive' && !n.parentRecordId);
+        // 5. Network receive overhead
         const netRecvMain = nodes.filter(n => n.name === 'Player Network Receive');
         const totalNetRecv = netRecvMain.reduce((s, n) => s + n.time, 0);
-        const netPct = (totalNetRecv / totalTickNs) * 100;
-        if (netPct > 25) {
+        const netRecvPct = (totalNetRecv / totalTickNs) * 100;
+        if (netRecvPct > 25) {
             issues.push({
-                severity: netPct > 40 ? 'warning' : 'info',
+                severity: netRecvPct > 40 ? 'warning' : 'info',
                 title: 'High Network Receive Overhead',
-                body: `Network packet processing takes <strong>${netPct.toFixed(1)}%</strong> of tick time. ` +
-                    `This is usually caused by many players or plugins with heavy packet handlers.`,
-                metrics: [`${netPct.toFixed(1)}% of tick`],
+                body: `Network packet processing takes <strong>${netRecvPct.toFixed(1)}%</strong> of tick time. ` +
+                    `Usually caused by many players or heavy packet handlers (anticheats).`,
+                metrics: [`${netRecvPct.toFixed(1)}% of tick`],
                 rec: 'Check DataPacketReceiveEvent handlers. Anticheats and packet-heavy plugins are common culprits.',
             });
         }
 
-        // 6. Chunk loading on main thread
-        const chunkLoads = nodes.filter(n => n.name.match(/- Chunk Load$/));
+        // 6. Network send overhead
+        const netSendMain = nodes.filter(n => n.name === 'Player Network Send');
+        const totalNetSend = netSendMain.reduce((s, n) => s + n.time, 0);
+        const netSendPct = (totalNetSend / totalTickNs) * 100;
+        if (netSendPct > 15) {
+            issues.push({
+                severity: netSendPct > 30 ? 'warning' : 'info',
+                title: 'High Network Send Overhead',
+                body: `Sending packets takes <strong>${netSendPct.toFixed(1)}%</strong> of tick time. ` +
+                    `This usually means many players, high entity counts, or excessive packet broadcasting.`,
+                metrics: [`${netSendPct.toFixed(1)}% of tick`],
+                rec: 'Reduce view distance, limit entity count, or check for plugins that broadcast packets excessively.',
+            });
+        }
+
+        // 7. Chunk loading on main thread
+        const chunkLoads = nodes.filter(n => n.name.endsWith(' - Chunk Load'));
         const totalChunkMs = chunkLoads.reduce((s, n) => s + n.time, 0) / 1_000_000;
         const chunkPct = (chunkLoads.reduce((s, n) => s + n.time, 0) / totalTickNs) * 100;
         if (chunkPct > 5) {
             issues.push({
                 severity: chunkPct > 15 ? 'warning' : 'info',
                 title: 'Chunk Loading Overhead',
-                body: `Chunk loading took <strong>${totalChunkMs.toFixed(0)}ms</strong> total (<strong>${chunkPct.toFixed(1)}%</strong> of tick time). ` +
-                    `Heavy chunk loading usually means players are moving fast or teleporting often.`,
+                body: `Chunk loading took <strong>${totalChunkMs.toFixed(0)}ms</strong> total (<strong>${chunkPct.toFixed(1)}%</strong> of tick time).`,
                 metrics: [`${chunkPct.toFixed(1)}% of tick`, `total: ${totalChunkMs.toFixed(0)}ms`],
                 rec: 'Consider pre-generating chunks in frequently visited areas. Reduce view distance if needed.',
             });
         }
 
-        // 7. Random chunk updates
-        const randomUpdates = nodes.filter(n => n.name.match(/^\w[\w\d_]+ - Random Chunk Updates$/));
+        // 8. Random chunk updates
+        const randomUpdates = nodes.filter(n => n.name.endsWith(' - Random Chunk Updates'));
         const totalRandomMs = randomUpdates.reduce((s, n) => s + n.time, 0) / 1_000_000;
         const randomPct = (randomUpdates.reduce((s, n) => s + n.time, 0) / totalTickNs) * 100;
         if (randomPct > 10) {
             issues.push({
                 severity: randomPct > 20 ? 'warning' : 'info',
                 title: 'Heavy Random Chunk Updates',
-                body: `Random tick updates take <strong>${randomPct.toFixed(1)}%</strong> of tick time across all worlds. ` +
-                    `This is normal for survival servers but can be reduced if needed.`,
+                body: `Random tick updates take <strong>${randomPct.toFixed(1)}%</strong> of tick time across all worlds.`,
                 metrics: [`${randomPct.toFixed(1)}% of tick`],
                 rec: 'Reduce random-tick-speed in pocketmine.yml or unload unused worlds.',
             });
         }
 
-        // 8. High violations entries (top 5 non-root)
+        // 9. Neighbour block updates
+        const neighbourUpdates = nodes.filter(n => n.name.endsWith(' - Neighbour Block Updates'));
+        const totalNeighbourMs = neighbourUpdates.reduce((s, n) => s + n.time, 0) / 1_000_000;
+        const neighbourPct = (neighbourUpdates.reduce((s, n) => s + n.time, 0) / totalTickNs) * 100;
+        if (neighbourPct > 8) {
+            issues.push({
+                severity: neighbourPct > 15 ? 'warning' : 'info',
+                title: 'Neighbour Block Update Overhead',
+                body: `Neighbour block updates take <strong>${neighbourPct.toFixed(1)}%</strong> of tick time (<strong>${totalNeighbourMs.toFixed(0)}ms</strong> total). ` +
+                    `This happens when many blocks change state (water flow, redstone, explosions).`,
+                metrics: [`${neighbourPct.toFixed(1)}% of tick`, `total: ${totalNeighbourMs.toFixed(0)}ms`],
+                rec: 'Consider limiting neighbour update rate per tick. Large-scale block changes (explosions, world edits) trigger cascading updates.',
+            });
+        }
+
+        // 10. Scheduled block updates
+        const scheduledUpdates = nodes.filter(n => n.name.endsWith(' - Scheduled Block Updates'));
+        const totalScheduledMs = scheduledUpdates.reduce((s, n) => s + n.time, 0) / 1_000_000;
+        const scheduledPct = (scheduledUpdates.reduce((s, n) => s + n.time, 0) / totalTickNs) * 100;
+        if (scheduledPct > 5) {
+            issues.push({
+                severity: scheduledPct > 12 ? 'warning' : 'info',
+                title: 'Scheduled Block Update Overhead',
+                body: `Scheduled block updates take <strong>${scheduledPct.toFixed(1)}%</strong> of tick time. ` +
+                    `Common with water/lava flow, falling blocks, and redstone.`,
+                metrics: [`${scheduledPct.toFixed(1)}% of tick`],
+                rec: 'Consider limiting scheduled block updates per tick or disabling liquid flow in heavily loaded worlds.',
+            });
+        }
+
+        // 11. Heavy event handlers (from plugin section)
+        const eventHandlers = nodes.filter(n =>
+            n.name.includes('->') && n.name.includes('Event') && !n.name.includes('ModalFormResponse')
+        );
+        for (const eh of eventHandlers) {
+            const pct = (eh.time / totalTickNs) * 100;
+            if (pct > 3 || eh.violations > 3) {
+                const avgMs = eh.avg / 1_000_000;
+                const peakMs = eh.peak / 1_000_000;
+                // Skip if task already reported
+                if (issues.some(i => i.title.includes(this._shortName(eh.name)))) continue;
+                issues.push({
+                    severity: eh.violations > 10 ? 'warning' : 'info',
+                    title: `Heavy Event Handler: ${this._shortName(eh.name)}`,
+                    body: `Takes <strong>${pct.toFixed(1)}%</strong> of tick time (avg <strong>${avgMs.toFixed(1)}ms</strong>, peak <strong>${peakMs.toFixed(0)}ms</strong>). ` +
+                        `${eh.violations} violations, ${eh.count} calls.`,
+                    metrics: [`${pct.toFixed(1)}% of tick`, `avg: ${avgMs.toFixed(1)}ms`, `violations: ${eh.violations}`],
+                    rec: 'This event handler is taking significant time. Check if it can be optimized or if some work can be deferred.',
+                });
+            }
+        }
+
+        // 12. Explosion overhead
+        const explosions = nodes.filter(n => n.name.includes('Explosion'));
+        const totalExplosionNs = explosions.reduce((s, n) => s + n.time, 0);
+        const explosionPct = (totalExplosionNs / totalTickNs) * 100;
+        if (explosionPct > 3) {
+            issues.push({
+                severity: explosionPct > 8 ? 'warning' : 'info',
+                title: 'Explosion Processing Overhead',
+                body: `Explosions take <strong>${explosionPct.toFixed(1)}%</strong> of tick time (<strong>${(totalExplosionNs / 1_000_000).toFixed(0)}ms</strong> total).`,
+                metrics: [`${explosionPct.toFixed(1)}% of tick`],
+                rec: 'Limit TNT/creeper explosions or reduce explosion radius. Consider queuing explosions across ticks.',
+            });
+        }
+
+        // 13. High violations entries (top 5 non-root, not already reported)
         const highViolations = nodes
             .filter(n => n.violations > 3 && n.name !== 'Full Server Tick' && n.name !== 'Server Tick Update Cycle' && n.name !== 'Server Mid-Tick Processing')
             .sort((a, b) => b.violations - a.violations)
             .slice(0, 5);
 
         for (const entry of highViolations) {
-            // Skip if already reported
             if (issues.some(i => i.title.includes(this._shortName(entry.name)))) continue;
             if (entry.name === 'Cyclic Garbage Collector' || entry.name === 'Memory Manager') continue;
             if (entry.name.includes('Connection Handler') || entry.name.includes('Player Network')) continue;
-            if (entry.name.match(/^Worlds? -/)) continue;
+            if (entry.name.endsWith(' - World Tick')) continue;
 
             const avgMs = entry.avg / 1_000_000;
             const peakMs = entry.peak / 1_000_000;
@@ -357,12 +459,14 @@ class TimingsAnalyzer {
     }
 
     _shortName(name) {
-        // Shorten long namespaces
         return name
             .replace(/^Task:\s*/, '')
             .replace(/.*\\([^\\]+)$/, '$1')
             .replace(/\(interval:\d+\)/, '')
-            .replace(/\(Single\)/, '');
+            .replace(/\(Single\)/, '')
+            .replace(/-&gt;/g, '→')
+            .replace(/->/g, '→')
+            .trim();
     }
 
     _calcHealth(tps, avgTickMs, peakTickMs, violations, ticks, issues) {
@@ -383,7 +487,8 @@ class TimingsAnalyzer {
 
         // Critical issues (0-15 points)
         const criticals = issues.filter(i => i.severity === 'critical').length;
-        score -= Math.min(15, criticals * 5);
+        const warnings = issues.filter(i => i.severity === 'warning').length;
+        score -= Math.min(15, criticals * 5 + warnings * 2);
 
         return Math.max(0, Math.min(100, Math.round(score)));
     }
@@ -393,34 +498,117 @@ class TimingsAnalyzer {
 
 class TimingsUI {
     constructor() {
-        this.parsed = null;
-        this.analysis = null;
+        this.reports = [];
     }
 
-    render(parsed, analysis) {
-        this.parsed = parsed;
-        this.analysis = analysis;
+    renderMultiple(reports) {
+        this.reports = reports;
+        const container = document.getElementById('reports-container');
+        const tabsEl = document.getElementById('report-tabs');
+        container.innerHTML = '';
 
-        this._renderMetrics(analysis);
-        this._renderHealth(analysis.health);
-        this._renderIssues(analysis.issues);
-        this._renderWorlds(analysis.worlds);
-        this._renderPlugins(analysis.pluginImpact);
-        this._renderTree(parsed.roots, analysis);
+        const isMulti = reports.length > 1;
+
+        if (isMulti) {
+            tabsEl.classList.remove('hidden');
+            tabsEl.innerHTML = reports.map((r, i) => {
+                const label = this._reportLabel(r, i);
+                const hClass = r.analysis.health >= 80 ? 'good' : r.analysis.health >= 50 ? 'warn' : 'bad';
+                return `<button class="report-tab ${i === 0 ? 'active' : ''}" data-report="${i}">${label} <span class="report-tab__health report-tab__health--${hClass}">${r.analysis.health}</span></button>`;
+            }).join('');
+
+            tabsEl.addEventListener('click', (e) => {
+                const tab = e.target.closest('.report-tab');
+                if (!tab) return;
+                const idx = parseInt(tab.dataset.report);
+                tabsEl.querySelectorAll('.report-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                container.querySelectorAll('.report-container').forEach((c, i) => {
+                    c.classList.toggle('active', i === idx);
+                });
+            });
+        } else {
+            tabsEl.classList.add('hidden');
+        }
+
+        reports.forEach((r, i) => {
+            const div = document.createElement('div');
+            div.className = `report-container ${i === 0 ? 'active' : ''}`;
+            div.id = `report-${i}`;
+            div.innerHTML = this._reportHTML(i);
+            container.appendChild(div);
+            this._renderReport(div, r.parsed, r.analysis);
+        });
 
         document.getElementById('results').classList.remove('hidden');
         document.getElementById('hero').style.minHeight = 'auto';
         document.getElementById('hero').style.paddingTop = '20px';
         document.getElementById('hero').style.paddingBottom = '16px';
 
-        // Scroll to results
         setTimeout(() => {
-            document.getElementById('dashboard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            (isMulti ? tabsEl : container).scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 100);
     }
 
-    _renderMetrics(a) {
-        const grid = document.getElementById('metrics-grid');
+    _reportLabel(report, index) {
+        const meta = report.analysis.meta;
+        if (meta.version) {
+            const ver = meta.version.replace(/^v/, '');
+            return `Report ${index + 1} (v${ver})`;
+        }
+        return `Report ${index + 1}`;
+    }
+
+    _reportHTML(idx) {
+        return `
+            <section class="section">
+                <h2 class="section__title">Dashboard</h2>
+                <div class="metrics-grid" data-el="metrics-grid"></div>
+                <div class="health-bar-wrap">
+                    <div class="health-label">Server Health</div>
+                    <div class="health-bar"><div class="health-bar__fill" data-el="health-fill"></div></div>
+                    <div class="health-score" data-el="health-score"></div>
+                </div>
+            </section>
+            <section class="section">
+                <h2 class="section__title">Detected Issues <span class="badge" data-el="issues-count"></span></h2>
+                <div data-el="issues-list"></div>
+            </section>
+            <section class="section" data-el="worlds-section">
+                <h2 class="section__title">World Load Distribution</h2>
+                <div data-el="worlds-chart"></div>
+            </section>
+            <section class="section" data-el="plugins-section">
+                <h2 class="section__title">Plugin Impact</h2>
+                <div data-el="plugins-list"></div>
+            </section>
+            <section class="section">
+                <h2 class="section__title">Timings Tree</h2>
+                <div class="tree-controls">
+                    <button class="btn-sm" data-el="btn-expand-all">Expand All</button>
+                    <button class="btn-sm" data-el="btn-collapse-all">Collapse All</button>
+                    <input type="text" class="tree-search" data-el="tree-search" placeholder="Filter...">
+                </div>
+                <div class="tree-view" data-el="tree-view"></div>
+            </section>`;
+    }
+
+    _el(container, name) {
+        return container.querySelector(`[data-el="${name}"]`);
+    }
+
+    _renderReport(container, parsed, analysis) {
+        this._renderMetrics(container, analysis);
+        this._renderHealth(container, analysis.health);
+        this._renderIssues(container, analysis.issues);
+        this._renderWorlds(container, analysis.worlds);
+        this._renderPlugins(container, analysis.pluginImpact);
+        this._renderTree(container, parsed.roots);
+        this._bindTreeControls(container);
+    }
+
+    _renderMetrics(container, a) {
+        const grid = this._el(container, 'metrics-grid');
         const metrics = [
             { label: 'TPS', value: a.tps.toFixed(2), cls: a.tps >= 19.5 ? 'good' : a.tps >= 18 ? 'warn' : 'bad' },
             { label: 'Avg Tick', value: `${a.avgTickMs.toFixed(1)}ms`, cls: a.avgTickMs < 20 ? 'good' : a.avgTickMs < 40 ? 'warn' : 'bad' },
@@ -440,9 +628,9 @@ class TimingsUI {
         `).join('');
     }
 
-    _renderHealth(score) {
-        const fill = document.getElementById('health-fill');
-        const scoreEl = document.getElementById('health-score');
+    _renderHealth(container, score) {
+        const fill = this._el(container, 'health-fill');
+        const scoreEl = this._el(container, 'health-score');
         const color = score >= 80 ? '#3fb950' : score >= 50 ? '#d29922' : '#f85149';
 
         fill.style.width = `${score}%`;
@@ -451,9 +639,9 @@ class TimingsUI {
         scoreEl.style.color = color;
     }
 
-    _renderIssues(issues) {
-        const list = document.getElementById('issues-list');
-        const countBadge = document.getElementById('issues-count');
+    _renderIssues(container, issues) {
+        const list = this._el(container, 'issues-list');
+        const countBadge = this._el(container, 'issues-count');
         countBadge.textContent = issues.length;
 
         if (issues.length === 0) {
@@ -474,9 +662,9 @@ class TimingsUI {
         `).join('');
     }
 
-    _renderWorlds(worlds) {
-        const chart = document.getElementById('worlds-chart');
-        const section = document.getElementById('worlds-section');
+    _renderWorlds(container, worlds) {
+        const chart = this._el(container, 'worlds-chart');
+        const section = this._el(container, 'worlds-section');
 
         if (worlds.length === 0) { section.classList.add('hidden'); return; }
         section.classList.remove('hidden');
@@ -494,14 +682,13 @@ class TimingsUI {
         `).join('');
     }
 
-    _renderPlugins(plugins) {
-        const list = document.getElementById('plugins-list');
-        const section = document.getElementById('plugins-section');
+    _renderPlugins(container, plugins) {
+        const list = this._el(container, 'plugins-list');
+        const section = this._el(container, 'plugins-section');
 
         if (plugins.length === 0) { section.classList.add('hidden'); return; }
         section.classList.remove('hidden');
 
-        // Show top 20
         list.innerHTML = plugins.slice(0, 20).map((p, i) => `
             <div class="plugin-row">
                 <span class="plugin-row__rank">${i + 1}</span>
@@ -512,8 +699,8 @@ class TimingsUI {
         `).join('');
     }
 
-    _renderTree(roots, analysis) {
-        const view = document.getElementById('tree-view');
+    _renderTree(container, roots) {
+        const view = this._el(container, 'tree-view');
         const totalTickNs = roots.find(n => n.name === 'Full Server Tick')?.time || 1;
 
         const html = this._buildTreeHTML(roots, totalTickNs, 0);
@@ -529,6 +716,51 @@ class TimingsUI {
                 children.classList.toggle('open');
                 toggle.classList.toggle('expanded');
             }
+        });
+    }
+
+    _bindTreeControls(container) {
+        const expandBtn = this._el(container, 'btn-expand-all');
+        const collapseBtn = this._el(container, 'btn-collapse-all');
+        const searchInput = this._el(container, 'tree-search');
+        const treeView = this._el(container, 'tree-view');
+
+        expandBtn.addEventListener('click', () => {
+            treeView.querySelectorAll('.tree-children').forEach(c => c.classList.add('open'));
+            treeView.querySelectorAll('.tree-node__toggle:not(.leaf)').forEach(t => t.classList.add('expanded'));
+        });
+        collapseBtn.addEventListener('click', () => {
+            treeView.querySelectorAll('.tree-children').forEach(c => c.classList.remove('open'));
+            treeView.querySelectorAll('.tree-node__toggle').forEach(t => t.classList.remove('expanded'));
+        });
+
+        let searchTimeout;
+        searchInput.addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                const query = e.target.value.toLowerCase().trim();
+                treeView.querySelectorAll('.tree-node').forEach(node => {
+                    const name = (node.dataset.name || '').toLowerCase();
+                    if (!query) {
+                        node.classList.remove('filtered-out', 'highlight');
+                    } else if (name.includes(query)) {
+                        node.classList.remove('filtered-out');
+                        node.classList.add('highlight');
+                        let parent = node.parentElement;
+                        while (parent && parent !== treeView) {
+                            if (parent.classList.contains('tree-children')) {
+                                parent.classList.add('open');
+                                const prevToggle = parent.previousElementSibling?.querySelector('.tree-node__toggle');
+                                if (prevToggle) prevToggle.classList.add('expanded');
+                            }
+                            parent = parent.parentElement;
+                        }
+                    } else {
+                        node.classList.add('filtered-out');
+                        node.classList.remove('highlight');
+                    }
+                });
+            }, 200);
         });
     }
 
@@ -618,8 +850,8 @@ const DEMO_TIMINGS = `Minecraft
         Memory Manager Time: 400000000 Count: 3200 Avg: 125000.0 Violations: 4 RecordId: 500 ParentRecordId: 200 TimerId: 17 Ticks: 3200 Peak: 390000000
             Cyclic Garbage Collector Time: 380000000 Count: 2 Avg: 190000000.0 Violations: 4 RecordId: 501 ParentRecordId: 500 TimerId: 74 Ticks: 2 Peak: 380000000
 Guardian v1.3.3
-    veroxcode\\Guardian\\Listener\\EventListener-&gt;onPacketReceive(DataPacketReceiveEvent) Time: 400000000 Count: 8000 Avg: 50000.0 Violations: 0 RecordId: 600 ParentRecordId: 106 TimerId: 86781 Ticks: 3100 Peak: 5000000
-    veroxcode\\Guardian\\Listener\\EventListener-&gt;onPlayerMove(PlayerMoveEvent) Time: 200000000 Count: 5000 Avg: 40000.0 Violations: 0 RecordId: 601 ParentRecordId: 304 TimerId: 86798 Ticks: 3000 Peak: 8000000
+    veroxcode\\Guardian\\Listener\\EventListener->onPacketReceive(DataPacketReceiveEvent) Time: 400000000 Count: 8000 Avg: 50000.0 Violations: 0 RecordId: 600 ParentRecordId: 106 TimerId: 86781 Ticks: 3100 Peak: 5000000
+    veroxcode\\Guardian\\Listener\\EventListener->onPlayerMove(PlayerMoveEvent) Time: 200000000 Count: 5000 Avg: 40000.0 Violations: 0 RecordId: 601 ParentRecordId: 304 TimerId: 86798 Ticks: 3000 Peak: 8000000
 CubeTop v1.0.0
     Task: phpcube\\task\\CubeHologramTask(interval:20) Time: 50000000 Count: 160 Avg: 312500.0 Violations: 1 RecordId: 700 ParentRecordId: 202 TimerId: 203911 Ticks: 160 Peak: 82000000
 NoviceQuests v1.0.0
@@ -628,12 +860,57 @@ NoviceQuests v1.0.0
 # Obsidian Engine 5.41.2+dev
 Sample time 163000000000 (163.0s)`;
 
+// ─── CORS Proxy Fetch ───────────────────────────────────────
+
+async function fetchTimings(url) {
+    // Normalize URL to raw format
+    let rawUrl = url.trim();
+    if (rawUrl.includes('timings.pmmp.io') && !rawUrl.includes('raw=1')) {
+        rawUrl = rawUrl + (rawUrl.includes('?') ? '&' : '?') + 'raw=1';
+    }
+
+    // Try direct fetch first
+    try {
+        const resp = await fetch(rawUrl, { signal: AbortSignal.timeout(8000) });
+        if (resp.ok) {
+            const text = await resp.text();
+            if (text.includes('Full Server Tick')) return text;
+        }
+    } catch (_) { /* CORS blocked, try proxies */ }
+
+    // CORS proxy fallback list
+    const proxies = [
+        (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+        (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+        (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+        (u) => `https://api.cors.lol/?url=${encodeURIComponent(u)}`,
+    ];
+
+    for (const makeProxy of proxies) {
+        try {
+            const proxyUrl = makeProxy(rawUrl);
+            const resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
+            if (!resp.ok) continue;
+            const text = await resp.text();
+            if (text.includes('Full Server Tick')) return text;
+        } catch (_) { continue; }
+    }
+
+    throw new Error(
+        'Could not fetch timings (CORS restriction + all proxies failed). ' +
+        'Open the URL with &raw=1 in your browser, copy all text, and paste it here.'
+    );
+}
+
 // ─── App Init ───────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
     const parser = new TimingsParser();
     const analyzer = new TimingsAnalyzer();
     const ui = new TimingsUI();
+
+    // Pending files from file upload
+    let pendingFiles = [];
 
     // Tab switching
     document.querySelectorAll('.tab').forEach(tab => {
@@ -657,25 +934,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     dropZone.addEventListener('drop', (e) => {
         e.preventDefault();
-        const file = e.dataTransfer.files[0];
-        if (file) handleFile(file);
+        handleFiles(Array.from(e.dataTransfer.files));
     });
     fileInput.addEventListener('change', () => {
-        if (fileInput.files[0]) handleFile(fileInput.files[0]);
+        if (fileInput.files.length > 0) handleFiles(Array.from(fileInput.files));
     });
 
-    function handleFile(file) {
-        const reader = new FileReader();
-        reader.onload = () => {
-            document.getElementById('timings-text').value = reader.result;
-            // Switch to paste tab to show content
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-            document.querySelector('[data-tab="paste"]').classList.add('active');
-            document.getElementById('tab-paste').classList.add('active');
-            dropZone.querySelector('.file-drop__text').textContent = `Loaded: ${file.name}`;
-        };
-        reader.readAsText(file);
+    function handleFiles(files) {
+        pendingFiles = files.filter(f => f.size > 0);
+        const names = pendingFiles.map(f => f.name).join(', ');
+        dropZone.querySelector('.file-drop__text').textContent =
+            pendingFiles.length === 1 ? `Loaded: ${names}` : `Loaded ${pendingFiles.length} files: ${names}`;
     }
 
     // Analyze button
@@ -686,42 +955,70 @@ document.addEventListener('DOMContentLoaded', () => {
         clearError();
 
         try {
-            let text = '';
             const activeTab = document.querySelector('.tab.active').dataset.tab;
+            let timingsTexts = [];
 
             if (activeTab === 'paste') {
-                text = document.getElementById('timings-text').value.trim();
+                const text = document.getElementById('timings-text').value.trim();
+                if (!text) throw new Error('No timings data provided.');
+                // Split by === separator for multi-timings
+                timingsTexts = text.split(/\n\s*===\s*\n/).map(t => t.trim()).filter(Boolean);
             } else if (activeTab === 'url') {
-                const url = document.getElementById('timings-url').value.trim();
-                if (!url) throw new Error('Please enter a timings URL');
-                text = await fetchTimings(url);
+                const urlText = document.getElementById('timings-url').value.trim();
+                if (!urlText) throw new Error('Please enter a timings URL');
+                const urls = urlText.split('\n').map(u => u.trim()).filter(Boolean);
+
+                for (let i = 0; i < urls.length; i++) {
+                    btnAnalyze.textContent = urls.length > 1
+                        ? `Fetching ${i + 1}/${urls.length}...`
+                        : 'Fetching...';
+                    const text = await fetchTimings(urls[i]);
+                    timingsTexts.push(text);
+                }
+                btnAnalyze.textContent = 'Analyze Timings';
             } else if (activeTab === 'file') {
-                text = document.getElementById('timings-text').value.trim();
+                if (pendingFiles.length === 0) throw new Error('No files selected. Tap to select or drop .txt files.');
+                for (const file of pendingFiles) {
+                    const text = await readFileText(file);
+                    timingsTexts.push(text);
+                }
             }
 
-            if (!text) throw new Error('No timings data provided. Paste text, enter a URL, or upload a file.');
-            if (!text.includes('Full Server Tick Time')) {
-                throw new Error('Invalid timings format. Make sure you\'re using raw timings text (add &raw=1 to timings.pmmp.io URL).');
+            if (timingsTexts.length === 0) throw new Error('No timings data provided.');
+
+            // Validate all
+            for (let i = 0; i < timingsTexts.length; i++) {
+                if (!timingsTexts[i].includes('Full Server Tick Time')) {
+                    throw new Error(
+                        timingsTexts.length > 1
+                            ? `Report ${i + 1}: Invalid timings format. Make sure you're using raw timings text (add &raw=1 to URL).`
+                            : 'Invalid timings format. Make sure you\'re using raw timings text (add &raw=1 to timings.pmmp.io URL).'
+                    );
+                }
             }
 
-            // Parse & analyze (defer to allow loading state to render)
+            // Parse & analyze all
             await new Promise(r => setTimeout(r, 50));
-            const parsed = parser.parse(text);
-            const analysis = analyzer.analyze(parsed);
-            ui.render(parsed, analysis);
+            const reports = timingsTexts.map(text => {
+                const parsed = parser.parse(text);
+                const analysis = analyzer.analyze(parsed);
+                return { parsed, analysis };
+            });
+
+            ui.renderMultiple(reports);
 
         } catch (err) {
             showError(err.message);
         } finally {
             btnAnalyze.classList.remove('loading');
             btnAnalyze.disabled = false;
+            btnAnalyze.textContent = 'Analyze Timings';
         }
     });
 
     // Demo button
     document.getElementById('btn-demo').addEventListener('click', () => {
         document.getElementById('timings-text').value = DEMO_TIMINGS;
-        // Switch to paste tab
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
         document.querySelector('[data-tab="paste"]').classList.add('active');
@@ -737,87 +1034,19 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('hero').style.paddingBottom = '';
         document.getElementById('timings-text').value = '';
         document.getElementById('timings-url').value = '';
+        pendingFiles = [];
+        const fileText = document.querySelector('.file-drop__text');
+        if (fileText) fileText.textContent = 'Tap to select or drop .txt files (multiple supported)';
         window.scrollTo({ top: 0, behavior: 'smooth' });
     });
 
-    // Tree controls
-    document.getElementById('btn-expand-all').addEventListener('click', () => {
-        document.querySelectorAll('.tree-children').forEach(c => c.classList.add('open'));
-        document.querySelectorAll('.tree-node__toggle:not(.leaf)').forEach(t => t.classList.add('expanded'));
-    });
-    document.getElementById('btn-collapse-all').addEventListener('click', () => {
-        document.querySelectorAll('.tree-children').forEach(c => c.classList.remove('open'));
-        document.querySelectorAll('.tree-node__toggle').forEach(t => t.classList.remove('expanded'));
-    });
-
-    // Tree search
-    let searchTimeout;
-    document.getElementById('tree-search').addEventListener('input', (e) => {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => {
-            const query = e.target.value.toLowerCase().trim();
-            document.querySelectorAll('.tree-node').forEach(node => {
-                const name = (node.dataset.name || '').toLowerCase();
-                if (!query) {
-                    node.classList.remove('filtered-out', 'highlight');
-                } else if (name.includes(query)) {
-                    node.classList.remove('filtered-out');
-                    node.classList.add('highlight');
-                    // Expand parents
-                    let parent = node.parentElement;
-                    while (parent) {
-                        if (parent.classList.contains('tree-children')) {
-                            parent.classList.add('open');
-                            const prevToggle = parent.previousElementSibling?.querySelector('.tree-node__toggle');
-                            if (prevToggle) prevToggle.classList.add('expanded');
-                        }
-                        parent = parent.parentElement;
-                    }
-                } else {
-                    node.classList.add('filtered-out');
-                    node.classList.remove('highlight');
-                }
-            });
-        }, 200);
-    });
-
-    // URL fetch with CORS proxy fallback
-    async function fetchTimings(url) {
-        // Normalize URL to raw format
-        let rawUrl = url;
-        if (url.includes('timings.pmmp.io') && !url.includes('raw=1')) {
-            rawUrl = url + (url.includes('?') ? '&' : '?') + 'raw=1';
-        }
-
-        // Try direct fetch first
-        try {
-            const resp = await fetch(rawUrl);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const text = await resp.text();
-            if (text.includes('Full Server Tick')) return text;
-        } catch (_) { /* CORS blocked, try proxies */ }
-
-        // CORS proxy fallback list
-        const proxies = [
-            (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-            (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-            (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
-        ];
-
-        for (const makeProxy of proxies) {
-            try {
-                const proxyUrl = makeProxy(rawUrl);
-                const resp = await fetch(proxyUrl);
-                if (!resp.ok) continue;
-                const text = await resp.text();
-                if (text.includes('Full Server Tick')) return text;
-            } catch (_) { continue; }
-        }
-
-        throw new Error(
-            'Could not fetch timings (CORS restriction + all proxies failed). ' +
-            'Open the URL with &raw=1 in your browser, copy all text, and paste it here.'
-        );
+    function readFileText(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
+            reader.readAsText(file);
+        });
     }
 
     function showError(msg) {
