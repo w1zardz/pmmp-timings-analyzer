@@ -104,6 +104,31 @@ textarea { min-height: 120px; font-family: 'SF Mono', 'Fira Code', monospace; fo
 /* === Results === */
 .results { padding: 24px 0 48px; }
 
+/* === Report Tabs (multi-timings) === */
+.report-tabs {
+    display: flex; gap: 4px; margin-bottom: 20px; overflow-x: auto;
+    background: #161b22; border-radius: 8px; padding: 4px;
+    -webkit-overflow-scrolling: touch;
+}
+.report-tab {
+    padding: 10px 16px; border: none; background: transparent;
+    color: #8b949e; font-size: 0.85rem; font-weight: 600; border-radius: 6px;
+    cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    min-height: 40px; -webkit-tap-highlight-color: transparent;
+}
+.report-tab.active { background: #30363d; color: #e6edf3; }
+.report-tab:hover:not(.active) { color: #c9d1d9; }
+.report-tab .report-tab__health {
+    display: inline-block; margin-left: 6px; font-size: 0.75rem;
+    padding: 1px 6px; border-radius: 4px; font-weight: 700;
+}
+.report-tab__health--good { background: rgba(63,185,80,0.15); color: #3fb950; }
+.report-tab__health--warn { background: rgba(210,153,34,0.15); color: #d29922; }
+.report-tab__health--bad { background: rgba(248,81,73,0.15); color: #f85149; }
+
+.report-container { display: none; }
+.report-container.active { display: block; }
+
 .section { margin-bottom: 32px; }
 .section__title {
     font-size: 1.15rem; font-weight: 700; margin-bottom: 16px;
@@ -285,7 +310,7 @@ textarea { min-height: 120px; font-family: 'SF Mono', 'Fira Code', monospace; fo
 
 /* === Touch optimization === */
 @media (hover: none) and (pointer: coarse) {
-    .tab, .btn-sm, .tree-node__toggle {
+    .tab, .btn-sm, .tree-node__toggle, .report-tab {
         min-height: 44px; min-width: 44px;
     }
     .tree-node { padding: 4px 0; }
@@ -306,7 +331,8 @@ textarea { min-height: 120px; font-family: 'SF Mono', 'Fira Code', monospace; fo
 /* === Print === */
 @media print {
     body { background: #fff; color: #000; }
-    .hero, .footer, .tree-controls, .btn-analyze, .btn-demo, .new-analysis { display: none; }
+    .hero, .footer, .tree-controls, .btn-analyze, .btn-demo, .new-analysis, .report-tabs { display: none; }
     .metric-card, .issue-card, .world-row, .plugin-row { border: 1px solid #ccc; background: #fff; }
     .results { display: block !important; }
+    .report-container { display: block !important; }
 }
