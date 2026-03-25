@@ -109,10 +109,12 @@ class TimingsAnalyzer {
         const { nodes, roots, meta, plugins } = parsed;
 
         // Find key entries
-        const fullTick = nodes.find(n => n.name === 'Full Server Tick Time');
+        // Note: parser strips trailing " Time:" field label from names
+        // "Full Server Tick Time: 123" → name="Full Server Tick", time=123
+        const fullTick = nodes.find(n => n.name === 'Full Server Tick');
         const updateCycle = nodes.find(n => n.name === 'Server Tick Update Cycle');
         const gcNode = nodes.find(n => n.name === 'Cyclic Garbage Collector');
-        const memMgr = nodes.find(n => n.name === 'Memory Manager Time');
+        const memMgr = nodes.find(n => n.name === 'Memory Manager');
 
         const totalTickNs = fullTick ? fullTick.time : 1;
         const ticks = fullTick ? fullTick.ticks : 1;
@@ -279,8 +281,8 @@ class TimingsAnalyzer {
         }
 
         // 5. Network overhead
-        const netRecv = nodes.find(n => n.name === 'Player Network Receive Time' && !n.parentRecordId);
-        const netRecvMain = nodes.filter(n => n.name === 'Player Network Receive Time');
+        const netRecv = nodes.find(n => n.name === 'Player Network Receive' && !n.parentRecordId);
+        const netRecvMain = nodes.filter(n => n.name === 'Player Network Receive');
         const totalNetRecv = netRecvMain.reduce((s, n) => s + n.time, 0);
         const netPct = (totalNetRecv / totalTickNs) * 100;
         if (netPct > 25) {
@@ -326,14 +328,14 @@ class TimingsAnalyzer {
 
         // 8. High violations entries (top 5 non-root)
         const highViolations = nodes
-            .filter(n => n.violations > 3 && n.name !== 'Full Server Tick Time' && n.name !== 'Server Tick Update Cycle' && n.name !== 'Server Mid-Tick Processing Time')
+            .filter(n => n.violations > 3 && n.name !== 'Full Server Tick' && n.name !== 'Server Tick Update Cycle' && n.name !== 'Server Mid-Tick Processing')
             .sort((a, b) => b.violations - a.violations)
             .slice(0, 5);
 
         for (const entry of highViolations) {
             // Skip if already reported
             if (issues.some(i => i.title.includes(this._shortName(entry.name)))) continue;
-            if (entry.name === 'Cyclic Garbage Collector' || entry.name === 'Memory Manager Time') continue;
+            if (entry.name === 'Cyclic Garbage Collector' || entry.name === 'Memory Manager') continue;
             if (entry.name.includes('Connection Handler') || entry.name.includes('Player Network')) continue;
             if (entry.name.match(/^Worlds? -/)) continue;
 
@@ -512,7 +514,7 @@ class TimingsUI {
 
     _renderTree(roots, analysis) {
         const view = document.getElementById('tree-view');
-        const totalTickNs = roots.find(n => n.name === 'Full Server Tick Time')?.time || 1;
+        const totalTickNs = roots.find(n => n.name === 'Full Server Tick')?.time || 1;
 
         const html = this._buildTreeHTML(roots, totalTickNs, 0);
         view.innerHTML = html;
