@@ -2,118 +2,175 @@
 
 /* ============================================================
    PocketMine Timings Analyzer
-   Parser → Analyzer → UI
-   Supports multiple timings reports (batch analysis)
+   Parser → Analyzer → Aggregator → UI
+   Multi-report batch analysis with i18n (EN/RU)
    ============================================================ */
+
+// ─── i18n ───────────────────────────────────────────────────
+
+const I18N = {
+    en: {
+        heroSub: 'Detect lag sources, GC spikes & plugin bottlenecks in your <strong>PocketMine-MP</strong> server',
+        tabPaste: 'Paste Text', tabUrl: 'From URL', tabFile: 'Upload Files',
+        pastePlaceholder: 'Paste your raw timings text here...\n\nMultiple reports: separate with a line containing only ===\n\nGet raw text: timings.pmmp.io → your report → add &raw=1 to URL',
+        urlPlaceholder: 'https://timings.pmmp.io/?id=...&access_token=...\n\nOne URL per line for batch analysis',
+        urlHint: "We'll fetch raw data automatically via CORS proxy. One URL per line for batch analysis.",
+        fileDrop: 'Tap to select or drop .txt files (multiple supported)',
+        btnAnalyze: 'Analyze Timings', btnDemo: 'Try Demo', btnNew: 'New Analysis',
+        fetching: 'Fetching', expandAll: 'Expand All', collapseAll: 'Collapse All', filter: 'Filter...',
+        // Sections
+        dashboard: 'Dashboard', detectedIssues: 'Detected Issues', worldLoad: 'World Load Distribution',
+        pluginImpact: 'Plugin Impact', timingsTree: 'Timings Tree', serverHealth: 'Server Health',
+        // Metrics
+        mTps: 'TPS', mAvgTick: 'Avg Tick', mPeakTick: 'Peak Tick', mViolations: 'Violations',
+        mPlayers: 'Avg Players', mEntities: 'Avg Entities', mThreadLoad: 'Thread Load', mSampleTime: 'Sample Time',
+        // Aggregate
+        aggTitle: 'Aggregate Summary',
+        aggReports: 'Reports', aggAvgHealth: 'Avg Health', aggWorstHealth: 'Worst Health', aggTotalIssues: 'Total Issues',
+        aggTableReport: 'Report', aggTableTps: 'TPS', aggTableAvgTick: 'Avg Tick', aggTablePeak: 'Peak',
+        aggTableViolations: 'Violations', aggTablePlayers: 'Players', aggTableHealth: 'Health',
+        aggRecsTitle: 'Optimization Recommendations',
+        aggNoIssues: 'No issues detected! All servers are running great.',
+        noIssues: 'No issues detected! Your server is running great.',
+        // Issue titles
+        issGc: 'Garbage Collector Freezes', issForm: 'Slow Form Handler Callbacks',
+        issEntity: 'Heavy Entity', issTask: 'Slow Task', issNetRecv: 'High Network Receive Overhead',
+        issNetSend: 'High Network Send Overhead', issChunk: 'Chunk Loading Overhead',
+        issRandom: 'Heavy Random Chunk Updates', issNeighbour: 'Neighbour Block Update Overhead',
+        issScheduled: 'Scheduled Block Update Overhead', issEvent: 'Heavy Event Handler',
+        issExplosion: 'Explosion Processing Overhead', issViolations: 'High Violations',
+        // Recs
+        recGcHigh: 'GC threshold is too high, allowing roots to accumulate. Reduce GC_THRESHOLD_CAP or call gc_collect_cycles() more frequently.',
+        recGcLow: 'Minor GC overhead. Monitor root counts — if they grow above 10k, consider lowering GC threshold.',
+        recForm: "Profile which plugin's form callback causes this. Move heavy operations to async tasks.",
+        recEntity: 'Check if this entity broadcasts packets every tick. Consider reducing update frequency or limiting entity count.',
+        recTask: 'Profile this task. If it does heavy I/O, consider splitting across ticks or moving to AsyncTask.',
+        recNetRecv: 'Check DataPacketReceiveEvent handlers. Anticheats and packet-heavy plugins are common culprits.',
+        recNetSend: 'Reduce view distance, limit entity count, or check for plugins that broadcast packets excessively.',
+        recChunk: 'Pre-generate chunks in frequently visited areas. Reduce view distance if needed.',
+        recRandom: 'Reduce random-tick-speed in pocketmine.yml or unload unused worlds.',
+        recNeighbour: 'Consider limiting neighbour update rate per tick. Explosions and world edits trigger cascading updates.',
+        recScheduled: 'Consider limiting scheduled block updates per tick or disabling liquid flow in heavy worlds.',
+        recExplosion: 'Limit TNT/creeper explosions or reduce explosion radius. Consider queuing across ticks.',
+        recViolations: 'Investigate what causes spikes in this operation.',
+        // Aggregate recs
+        aggRecGcAll: 'GC freezes detected across all servers. Patch GarbageCollectorManager to add GC_THRESHOLD_CAP.',
+        aggRecGcSome: 'GC freezes found on {n}/{total} servers. Check GC threshold configuration.',
+        aggRecFormAll: 'Slow form callbacks on all servers. Profile ModalFormResponsePacket handlers.',
+        aggRecPluginHeavy: 'Plugin "{name}" is the heaviest across {n} reports (avg {pct}% of tick). Consider optimizing.',
+        aggRecViewDist: 'High chunk/network load on {n} servers. Reduce view-distance to 6.',
+        aggRecEntities: '{n} servers have heavy custom entities. Limit spawn counts or reduce tick frequency.',
+        foundOn: 'Found on',
+    },
+    ru: {
+        heroSub: 'Находи причины лагов, фризы GC и тяжёлые плагины на сервере <strong>PocketMine-MP</strong>',
+        tabPaste: 'Вставить текст', tabUrl: 'Из URL', tabFile: 'Загрузить файлы',
+        pastePlaceholder: 'Вставьте сырой текст таймингов...\n\nНесколько отчётов: разделяйте строкой ===\n\nСырой текст: timings.pmmp.io → ваш отчёт → добавьте &raw=1 к URL',
+        urlPlaceholder: 'https://timings.pmmp.io/?id=...&access_token=...\n\nПо одному URL на строку для пакетного анализа',
+        urlHint: 'Мы автоматически получим данные через CORS-прокси. По одному URL на строку.',
+        fileDrop: 'Нажмите или перетащите .txt файлы (можно несколько)',
+        btnAnalyze: 'Анализировать', btnDemo: 'Демо', btnNew: 'Новый анализ',
+        fetching: 'Загрузка', expandAll: 'Развернуть всё', collapseAll: 'Свернуть всё', filter: 'Поиск...',
+        dashboard: 'Обзор', detectedIssues: 'Обнаруженные проблемы', worldLoad: 'Нагрузка по мирам',
+        pluginImpact: 'Влияние плагинов', timingsTree: 'Дерево таймингов', serverHealth: 'Здоровье сервера',
+        mTps: 'TPS', mAvgTick: 'Ср. тик', mPeakTick: 'Пик тика', mViolations: 'Нарушения',
+        mPlayers: 'Ср. игроков', mEntities: 'Ср. сущностей', mThreadLoad: 'Нагрузка потока', mSampleTime: 'Время записи',
+        aggTitle: 'Общая сводка',
+        aggReports: 'Отчётов', aggAvgHealth: 'Ср. здоровье', aggWorstHealth: 'Худшее', aggTotalIssues: 'Всего проблем',
+        aggTableReport: 'Отчёт', aggTableTps: 'TPS', aggTableAvgTick: 'Ср. тик', aggTablePeak: 'Пик',
+        aggTableViolations: 'Нарушения', aggTablePlayers: 'Игроки', aggTableHealth: 'Здоровье',
+        aggRecsTitle: 'Рекомендации по оптимизации',
+        aggNoIssues: 'Проблем не обнаружено! Все серверы работают отлично.',
+        noIssues: 'Проблем не обнаружено! Сервер работает отлично.',
+        issGc: 'Фризы сборщика мусора', issForm: 'Медленные обработчики форм',
+        issEntity: 'Тяжёлая сущность', issTask: 'Медленная задача', issNetRecv: 'Высокая нагрузка приёма пакетов',
+        issNetSend: 'Высокая нагрузка отправки пакетов', issChunk: 'Нагрузка загрузки чанков',
+        issRandom: 'Тяжёлые случайные обновления чанков', issNeighbour: 'Нагрузка обновлений соседних блоков',
+        issScheduled: 'Нагрузка плановых обновлений блоков', issEvent: 'Тяжёлый обработчик событий',
+        issExplosion: 'Нагрузка обработки взрывов', issViolations: 'Частые нарушения',
+        recGcHigh: 'Порог GC слишком высокий, корни накапливаются. Уменьшите GC_THRESHOLD_CAP или запускайте gc_collect_cycles() чаще.',
+        recGcLow: 'Небольшая нагрузка GC. Следите за количеством корней — если больше 10к, снижайте порог.',
+        recForm: 'Определите, какой плагин вызывает тяжёлый callback в формах. Перенесите тяжёлые операции в async.',
+        recEntity: 'Проверьте, рассылает ли сущность пакеты каждый тик. Уменьшите частоту обновлений или лимит сущностей.',
+        recTask: 'Если задача делает тяжёлый I/O, разбейте на несколько тиков или перенесите в AsyncTask.',
+        recNetRecv: 'Проверьте обработчики DataPacketReceiveEvent. Античиты и тяжёлые плагины — частые причины.',
+        recNetSend: 'Уменьшите view-distance, ограничьте количество сущностей или проверьте плагины с массовой рассылкой.',
+        recChunk: 'Прегенерируйте чанки в популярных зонах. Уменьшите view-distance при необходимости.',
+        recRandom: 'Уменьшите random-tick-speed в pocketmine.yml или выгрузите неиспользуемые миры.',
+        recNeighbour: 'Ограничьте обновления соседних блоков за тик. Взрывы и WorldEdit вызывают каскады.',
+        recScheduled: 'Ограничьте плановые обновления за тик или отключите растекание жидкости в нагруженных мирах.',
+        recExplosion: 'Ограничьте TNT/криперов или уменьшите радиус взрывов. Можно ставить в очередь по тикам.',
+        recViolations: 'Исследуйте, что вызывает всплески в этой операции.',
+        aggRecGcAll: 'Фризы GC обнаружены на всех серверах. Запатчите GarbageCollectorManager — добавьте GC_THRESHOLD_CAP.',
+        aggRecGcSome: 'Фризы GC найдены на {n}/{total} серверах. Проверьте конфигурацию порога GC.',
+        aggRecFormAll: 'Медленные callback-и форм на всех серверах. Профилируйте обработчики ModalFormResponsePacket.',
+        aggRecPluginHeavy: 'Плагин «{name}» самый тяжёлый на {n} серверах (в среднем {pct}% тика). Стоит оптимизировать.',
+        aggRecViewDist: 'Высокая нагрузка чанков/сети на {n} серверах. Уменьшите view-distance до 6.',
+        aggRecEntities: '{n} серверов имеют тяжёлые кастомные сущности. Ограничьте спавн или частоту тиков.',
+        foundOn: 'Найдено на',
+    }
+};
+
+let currentLang = localStorage.getItem('pmmp-lang') || 'en';
+function t(key) { return (I18N[currentLang] && I18N[currentLang][key]) || I18N.en[key] || key; }
+function tReplace(key, vars) {
+    let s = t(key);
+    for (const [k, v] of Object.entries(vars)) s = s.replace(`{${k}}`, v);
+    return s;
+}
 
 // ─── Parser ─────────────────────────────────────────────────
 
 class TimingsParser {
     parse(raw) {
         const lines = raw.split('\n');
-        const nodes = [];
-        const nodeMap = {};
+        const nodes = [], nodeMap = {};
         let meta = { version: '', engine: '', formatVersion: '', sampleTime: 0, sampleTimeStr: '' };
         const plugins = {};
-        let currentPlugin = null;
-        let inAsyncSection = false;
+        let currentPlugin = null, inAsync = false;
 
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
+        for (const line of lines) {
             if (!line.trim()) continue;
-
-            // Footer metadata
             if (line.startsWith('# Version ')) { meta.version = line.slice(10).trim(); continue; }
-            if (line.startsWith('# Obsidian Engine ') || line.startsWith('# NG-PocketMine-MP ') || line.startsWith('# PocketMine-MP ')) {
-                meta.engine = line.slice(2).trim(); continue;
-            }
+            if (line.startsWith('# ') && (line.includes('Engine') || line.includes('PocketMine'))) { meta.engine = line.slice(2).trim(); continue; }
             if (line.startsWith('# FormatVersion ')) { meta.formatVersion = line.slice(16).trim(); continue; }
             if (line.startsWith('Sample time ')) {
                 const m = line.match(/Sample time (\d+)\s*\(([^)]+)\)/);
                 if (m) { meta.sampleTime = parseInt(m[1]); meta.sampleTimeStr = m[2]; }
                 continue;
             }
-
-            // Async thread marker — skip async sections
-            if (line.match(/^Async Thread #?\d+/i) || line.match(/^ThreadId: \d+/) || line === 'Async') {
-                inAsyncSection = true;
-                currentPlugin = null;
-                continue;
-            }
-
-            // Root marker — back to main thread
-            if (line === 'Minecraft' || line.match(/^Minecraft ThreadId: \d+/)) {
-                inAsyncSection = false;
-                currentPlugin = null;
-                continue;
-            }
-
-            // Skip async thread entries
-            if (inAsyncSection) continue;
-
-            // Plugin header: "PluginName vX.Y.Z" (no indent, no Time: field)
+            if (line.match(/^Async/i) || line.match(/^ThreadId:/)) { inAsync = true; currentPlugin = null; continue; }
+            if (line === 'Minecraft' || line.match(/^Minecraft ThreadId:/)) { inAsync = false; currentPlugin = null; continue; }
+            if (inAsync) continue;
             if (!line.startsWith(' ') && !line.includes(' Time: ') && line.match(/^[\w\\]+\s+v[\d.]+/)) {
                 currentPlugin = line.trim();
                 if (!plugins[currentPlugin]) plugins[currentPlugin] = [];
                 continue;
             }
-
-            // Timing entry
             const entry = this._parseLine(line);
             if (!entry) continue;
-
             entry.plugin = currentPlugin;
             entry.children = [];
             nodes.push(entry);
             nodeMap[entry.recordId] = entry;
-
-            if (currentPlugin) {
-                plugins[currentPlugin].push(entry);
-            }
+            if (currentPlugin) plugins[currentPlugin].push(entry);
         }
-
-        // Build tree
         const roots = [];
         for (const node of nodes) {
-            if (node.parentRecordId && nodeMap[node.parentRecordId]) {
-                nodeMap[node.parentRecordId].children.push(node);
-            } else {
-                roots.push(node);
-            }
+            if (node.parentRecordId && nodeMap[node.parentRecordId]) nodeMap[node.parentRecordId].children.push(node);
+            else roots.push(node);
         }
-
         return { nodes, roots, meta, plugins, nodeMap };
     }
-
     _parseLine(line) {
-        // Measure indent (4 spaces per level)
         const indent = line.search(/\S/);
         if (indent < 0) return null;
-        const depth = Math.floor(indent / 4);
-        const content = line.trim();
-
-        // Decode HTML entities
-        const decoded = content.replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&').replace(/&#039;/g, "'").replace(/&quot;/g, '"');
-
-        // Parse fields
-        const timeMatch = decoded.match(/^(.+?)\s+Time:\s*(\d+)\s+Count:\s*(\d+)\s+Avg:\s*([\d.]+)\s+Violations:\s*(\d+)\s+RecordId:\s*(\d+)\s+ParentRecordId:\s*(\d+|none)\s+TimerId:\s*(\d+)\s+Ticks:\s*(\d+)\s+Peak:\s*(\d+)/);
-        if (!timeMatch) return null;
-
-        return {
-            name: timeMatch[1].trim(),
-            time: parseInt(timeMatch[2]),
-            count: parseInt(timeMatch[3]),
-            avg: parseFloat(timeMatch[4]),
-            violations: parseInt(timeMatch[5]),
-            recordId: timeMatch[6],
-            parentRecordId: timeMatch[7] === 'none' ? null : timeMatch[7],
-            timerId: timeMatch[8],
-            ticks: parseInt(timeMatch[9]),
-            peak: parseInt(timeMatch[10]),
-            depth,
-            children: [],
-            plugin: null,
-        };
+        const decoded = line.trim().replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&').replace(/&#039;/g, "'").replace(/&quot;/g, '"');
+        const m = decoded.match(/^(.+?)\s+Time:\s*(\d+)\s+Count:\s*(\d+)\s+Avg:\s*([\d.]+)\s+Violations:\s*(\d+)\s+RecordId:\s*(\d+)\s+ParentRecordId:\s*(\d+|none)\s+TimerId:\s*(\d+)\s+Ticks:\s*(\d+)\s+Peak:\s*(\d+)/);
+        if (!m) return null;
+        return { name: m[1].trim(), time: +m[2], count: +m[3], avg: +m[4], violations: +m[5],
+            recordId: m[6], parentRecordId: m[7] === 'none' ? null : m[7], timerId: m[8],
+            ticks: +m[9], peak: +m[10], depth: Math.floor(indent / 4), children: [], plugin: null };
     }
 }
 
@@ -122,785 +179,513 @@ class TimingsParser {
 class TimingsAnalyzer {
     analyze(parsed) {
         const { nodes, roots, meta, plugins } = parsed;
-
-        // Find key entries
-        // Note: parser regex (.+?) strips trailing "Time" from names because "Time:" is the field delimiter
-        // "Full Server Tick Time: 123" → name="Full Server Tick", time=123
-        const fullTick = nodes.find(n => n.name === 'Full Server Tick');
-        const updateCycle = nodes.find(n => n.name === 'Server Tick Update Cycle');
-        const gcNode = nodes.find(n => n.name === 'Cyclic Garbage Collector');
-        const memMgr = nodes.find(n => n.name === 'Memory Manager');
-
-        const totalTickNs = fullTick ? fullTick.time : 1;
-        const ticks = fullTick ? fullTick.ticks : 1;
-        const avgTickNs = fullTick ? fullTick.avg : 0;
-        const avgTickMs = avgTickNs / 1_000_000;
-        const peakTickMs = fullTick ? fullTick.peak / 1_000_000 : 0;
-        const totalViolations = fullTick ? fullTick.violations : 0;
-
-        // TPS
+        const ft = nodes.find(n => n.name === 'Full Server Tick');
+        const gc = nodes.find(n => n.name === 'Cyclic Garbage Collector');
+        const T = ft ? ft.time : 1, ticks = ft ? ft.ticks : 1;
+        const avgMs = ft ? ft.avg / 1e6 : 0, peakMs = ft ? ft.peak / 1e6 : 0;
+        const violations = ft ? ft.violations : 0;
         let tps = 20;
-        if (meta.sampleTime > 0) {
-            tps = Math.min(20, ticks / (meta.sampleTime / 1_000_000_000));
-        } else if (avgTickMs > 50) {
-            tps = 1000 / avgTickMs;
-        }
-
-        // Main thread load
-        const sampleTimeNs = meta.sampleTime || (ticks * 50_000_000);
-        const mainThreadLoad = (totalTickNs / sampleTimeNs) * 100;
-
-        // Average players & entities
-        const playerTicks = nodes.filter(n => n.name === 'Entity Tick - Player');
-        const avgPlayers = playerTicks.reduce((s, n) => s + n.count, 0) / Math.max(1, ticks);
-        const allEntityTicks = nodes.filter(n => n.name.startsWith('Entity Tick - '));
-        const avgEntities = allEntityTicks.reduce((s, n) => s + n.count, 0) / Math.max(1, ticks);
-
-        // Sample time formatted
-        const sampleTimeSec = meta.sampleTime ? meta.sampleTime / 1_000_000_000 : ticks * 0.05;
-        const sampleTimeFormatted = sampleTimeSec > 60
-            ? `${(sampleTimeSec / 60).toFixed(1)} min`
-            : `${sampleTimeSec.toFixed(1)}s`;
-
-        // World breakdown
-        const worlds = this._analyzeWorlds(nodes, totalTickNs);
-
-        // Plugin impact
-        const pluginImpact = this._analyzePlugins(plugins, totalTickNs);
-
-        // Issues
-        const issues = this._detectIssues(nodes, fullTick, gcNode, totalTickNs, ticks, avgTickMs);
-
-        // Health score (0-100)
-        const health = this._calcHealth(tps, avgTickMs, peakTickMs, totalViolations, ticks, issues);
-
-        return {
-            tps: Math.round(tps * 100) / 100,
-            avgTickMs: Math.round(avgTickMs * 100) / 100,
-            peakTickMs: Math.round(peakTickMs * 100) / 100,
-            totalViolations,
-            avgPlayers: Math.round(avgPlayers * 10) / 10,
-            avgEntities: Math.round(avgEntities * 10) / 10,
-            mainThreadLoad: Math.round(mainThreadLoad * 10) / 10,
-            sampleTimeFormatted,
-            ticks,
-            worlds,
-            pluginImpact,
-            issues,
-            health,
-            meta,
-        };
+        if (meta.sampleTime > 0) tps = Math.min(20, ticks / (meta.sampleTime / 1e9));
+        else if (avgMs > 50) tps = 1000 / avgMs;
+        const stNs = meta.sampleTime || ticks * 5e7;
+        const load = (T / stNs) * 100;
+        const pTicks = nodes.filter(n => n.name === 'Entity Tick - Player');
+        const avgP = pTicks.reduce((s, n) => s + n.count, 0) / Math.max(1, ticks);
+        const eTicks = nodes.filter(n => n.name.startsWith('Entity Tick - '));
+        const avgE = eTicks.reduce((s, n) => s + n.count, 0) / Math.max(1, ticks);
+        const stSec = meta.sampleTime ? meta.sampleTime / 1e9 : ticks * 0.05;
+        const stFmt = stSec > 60 ? `${(stSec / 60).toFixed(1)} min` : `${stSec.toFixed(1)}s`;
+        const worlds = this._worlds(nodes, T);
+        const pluginImpact = this._plugins(plugins, T);
+        const issues = this._issues(nodes, ft, gc, T, ticks, avgMs);
+        const health = this._health(tps, avgMs, peakMs, violations, ticks, issues);
+        return { tps: Math.round(tps * 100) / 100, avgTickMs: Math.round(avgMs * 100) / 100,
+            peakTickMs: Math.round(peakMs * 100) / 100, totalViolations: violations,
+            avgPlayers: Math.round(avgP * 10) / 10, avgEntities: Math.round(avgE * 10) / 10,
+            mainThreadLoad: Math.round(load * 10) / 10, sampleTimeFormatted: stFmt, ticks,
+            worlds, pluginImpact, issues, health, meta };
     }
-
-    _analyzeWorlds(nodes, totalTickNs) {
-        // Match world names: anything before " - World Tick" that isn't "Worlds"
-        // World names can contain spaces, dots, hyphens, etc.
-        const worldTicks = nodes.filter(n => {
-            if (!n.name.endsWith(' - World Tick')) return false;
-            const worldName = n.name.replace(' - World Tick', '');
-            return worldName !== 'Worlds' && worldName.length > 0;
-        });
-        return worldTicks
-            .map(w => ({
-                name: w.name.replace(' - World Tick', ''),
-                avgMs: w.avg / 1_000_000,
-                totalMs: w.time / 1_000_000,
-                pct: (w.time / totalTickNs) * 100,
-                peakMs: w.peak / 1_000_000,
-                violations: w.violations,
-            }))
+    _worlds(nodes, T) {
+        return nodes.filter(n => n.name.endsWith(' - World Tick') && !n.name.startsWith('Worlds'))
+            .map(w => ({ name: w.name.replace(' - World Tick', ''), avgMs: w.avg / 1e6,
+                totalMs: w.time / 1e6, pct: (w.time / T) * 100, peakMs: w.peak / 1e6, violations: w.violations }))
             .sort((a, b) => b.totalMs - a.totalMs);
     }
-
-    _analyzePlugins(plugins, totalTickNs) {
-        const results = [];
+    _plugins(plugins, T) {
+        const r = [];
         for (const [name, entries] of Object.entries(plugins)) {
-            const totalTime = entries.reduce((s, e) => s + e.time, 0);
-            const totalViolations = entries.reduce((s, e) => s + e.violations, 0);
-            const peakEntry = entries.reduce((best, e) => e.peak > best.peak ? e : best, entries[0]);
-            results.push({
-                name,
-                totalMs: totalTime / 1_000_000,
-                pct: (totalTime / totalTickNs) * 100,
-                violations: totalViolations,
-                peakMs: peakEntry ? peakEntry.peak / 1_000_000 : 0,
-                peakName: peakEntry ? peakEntry.name : '',
-                entryCount: entries.length,
-            });
+            const tot = entries.reduce((s, e) => s + e.time, 0);
+            const viol = entries.reduce((s, e) => s + e.violations, 0);
+            const pk = entries.reduce((b, e) => e.peak > b.peak ? e : b, entries[0]);
+            r.push({ name, totalMs: tot / 1e6, pct: (tot / T) * 100, violations: viol,
+                peakMs: pk ? pk.peak / 1e6 : 0, peakName: pk ? pk.name : '', entryCount: entries.length });
         }
-        return results.sort((a, b) => b.totalMs - a.totalMs);
+        return r.sort((a, b) => b.totalMs - a.totalMs);
     }
-
-    _detectIssues(nodes, fullTick, gcNode, totalTickNs, ticks, avgTickMs) {
+    _issues(nodes, ft, gc, T, ticks, avgMs) {
         const issues = [];
+        const add = (sev, titleKey, title, body, metrics, recKey) =>
+            issues.push({ severity: sev, titleKey, title, body, metrics, recKey });
 
-        // 1. GC spikes — lowered threshold to catch moderate issues too
-        if (gcNode) {
-            const avgMs = gcNode.avg / 1_000_000;
-            const peakMs = gcNode.peak / 1_000_000;
-            const gcPct = (gcNode.time / totalTickNs) * 100;
-
-            if (avgMs > 5 || peakMs > 50 || gcPct > 2) {
-                issues.push({
-                    severity: peakMs > 200 ? 'critical' : (peakMs > 50 || avgMs > 20) ? 'warning' : 'info',
-                    title: 'Garbage Collector Freezes',
-                    body: `GC ran <strong>${gcNode.count}</strong> times, averaging <strong>${avgMs.toFixed(1)}ms</strong> per run with peak <strong>${peakMs.toFixed(0)}ms</strong>. ` +
-                        `Takes <strong>${gcPct.toFixed(1)}%</strong> of tick time. ${gcNode.violations} violations.`,
-                    metrics: [`avg: ${avgMs.toFixed(1)}ms`, `peak: ${peakMs.toFixed(0)}ms`, `runs: ${gcNode.count}`, `${gcPct.toFixed(1)}% of tick`],
-                    rec: avgMs > 20
-                        ? 'GC threshold is too high, allowing roots to accumulate. Reduce GC_THRESHOLD_CAP or call gc_collect_cycles() more frequently with fewer roots.'
-                        : 'Minor GC overhead. Monitor root counts in server logs — if they grow above 10k, consider lowering GC threshold.',
-                });
+        // GC
+        if (gc) {
+            const a = gc.avg / 1e6, p = gc.peak / 1e6, pct = (gc.time / T) * 100;
+            if (a > 5 || p > 50 || pct > 2) {
+                add(p > 200 ? 'critical' : (p > 50 || a > 20) ? 'warning' : 'info', 'issGc', '',
+                    `GC: <strong>${gc.count}</strong>x, avg <strong>${a.toFixed(1)}ms</strong>, peak <strong>${p.toFixed(0)}ms</strong>, ${pct.toFixed(1)}% tick, ${gc.violations}v`,
+                    [`avg: ${a.toFixed(1)}ms`, `peak: ${p.toFixed(0)}ms`, `${pct.toFixed(1)}%`],
+                    a > 20 ? 'recGcHigh' : 'recGcLow');
             }
         }
-
-        // 2. ModalForm lag
-        const formHandler = nodes.find(n => n.name.includes('Handler - ModalFormResponsePacket'));
-        if (formHandler && (formHandler.avg > 1_000_000 || formHandler.violations > 0)) {
-            const avgMs = formHandler.avg / 1_000_000;
-            const peakMs = formHandler.peak / 1_000_000;
-            issues.push({
-                severity: peakMs > 100 ? 'critical' : 'warning',
-                title: 'Slow Form Handler Callbacks',
-                body: `ModalFormResponsePacket handler averages <strong>${avgMs.toFixed(1)}ms</strong> per call (peak <strong>${peakMs.toFixed(0)}ms</strong>, ${formHandler.violations} violations). ` +
-                    `A form callback is doing heavy synchronous work.`,
-                metrics: [`avg: ${avgMs.toFixed(1)}ms`, `peak: ${peakMs.toFixed(0)}ms`, `calls: ${formHandler.count}`],
-                rec: 'Profile which plugin\'s form callback causes this. Move heavy operations to async tasks. Common culprits: database queries, inventory operations, or chunk teleportation inside form callbacks.',
-            });
+        // Forms
+        const fh = nodes.find(n => n.name.includes('Handler - ModalFormResponsePacket'));
+        if (fh && (fh.avg > 1e6 || fh.violations > 0)) {
+            const a = fh.avg / 1e6, p = fh.peak / 1e6;
+            add(p > 100 ? 'critical' : 'warning', 'issForm', '',
+                `ModalForm avg <strong>${a.toFixed(1)}ms</strong>, peak <strong>${p.toFixed(0)}ms</strong>, ${fh.violations}v, ${fh.count} calls`,
+                [`avg: ${a.toFixed(1)}ms`, `peak: ${p.toFixed(0)}ms`], 'recForm');
         }
-
-        // 3. Entity bottlenecks
-        const entityEntries = nodes.filter(n =>
-            n.name.startsWith('Entity Tick - ') && !n.name.includes('Player') && !n.name.includes('ItemEntity')
-        );
-        for (const e of entityEntries) {
-            const pct = (e.time / totalTickNs) * 100;
-            if (pct > 3 || e.avg > 200_000) {
-                const avgUs = e.avg / 1_000;
-                issues.push({
-                    severity: pct > 8 ? 'critical' : 'warning',
-                    title: `Heavy Entity: ${e.name.replace('Entity Tick - ', '')}`,
-                    body: `Takes <strong>${pct.toFixed(1)}%</strong> of tick time (${avgUs.toFixed(0)}\u00b5s avg, ${e.count} ticks). ` +
-                        `Peak: <strong>${(e.peak / 1_000_000).toFixed(1)}ms</strong>.`,
-                    metrics: [`${pct.toFixed(1)}% of tick`, `avg: ${avgUs.toFixed(0)}\u00b5s`, `count: ${e.count}`],
-                    rec: 'Check if this entity broadcasts packets every tick unnecessarily. Consider reducing update frequency or limiting entity count.',
-                });
+        // Entities
+        for (const e of nodes.filter(n => n.name.startsWith('Entity Tick - ') && !n.name.includes('Player') && !n.name.includes('ItemEntity'))) {
+            const pct = (e.time / T) * 100;
+            if (pct > 3 || e.avg > 2e5) {
+                add(pct > 8 ? 'critical' : 'warning', 'issEntity',
+                    `${t('issEntity')}: ${e.name.replace('Entity Tick - ', '')}`,
+                    `${pct.toFixed(1)}% tick, ${(e.avg / 1e3).toFixed(0)}\u00b5s avg, peak ${(e.peak / 1e6).toFixed(1)}ms`,
+                    [`${pct.toFixed(1)}%`, `count: ${e.count}`], 'recEntity');
             }
         }
-
-        // 4. Heavy scheduled tasks
-        const tasks = nodes.filter(n => n.name.startsWith('Task: '));
-        for (const t of tasks) {
-            if (t.avg > 500_000 || t.violations > 0) {
-                const avgMs = t.avg / 1_000_000;
-                const peakMs = t.peak / 1_000_000;
-                issues.push({
-                    severity: t.violations > 5 ? 'critical' : (t.violations > 0 ? 'warning' : 'info'),
-                    title: `Slow Task: ${this._shortName(t.name)}`,
-                    body: `Averages <strong>${avgMs.toFixed(1)}ms</strong> per run, peak <strong>${peakMs.toFixed(0)}ms</strong>. ` +
-                        `${t.violations} violations over ${t.count} runs.`,
-                    metrics: [`avg: ${avgMs.toFixed(1)}ms`, `peak: ${peakMs.toFixed(0)}ms`, `violations: ${t.violations}`],
-                    rec: 'Profile this task. If it does heavy I/O or computation, consider splitting across multiple ticks or moving to an AsyncTask.',
-                });
+        // Tasks
+        for (const t2 of nodes.filter(n => n.name.startsWith('Task: '))) {
+            if (t2.avg > 5e5 || t2.violations > 0) {
+                const a = t2.avg / 1e6, p = t2.peak / 1e6;
+                add(t2.violations > 5 ? 'critical' : t2.violations > 0 ? 'warning' : 'info', 'issTask',
+                    `${t('issTask')}: ${this._short(t2.name)}`,
+                    `avg ${a.toFixed(1)}ms, peak ${p.toFixed(0)}ms, ${t2.violations}v / ${t2.count} runs`,
+                    [`avg: ${a.toFixed(1)}ms`, `violations: ${t2.violations}`], 'recTask');
             }
         }
-
-        // 5. Network receive overhead
-        const netRecvMain = nodes.filter(n => n.name === 'Player Network Receive');
-        const totalNetRecv = netRecvMain.reduce((s, n) => s + n.time, 0);
-        const netRecvPct = (totalNetRecv / totalTickNs) * 100;
-        if (netRecvPct > 25) {
-            issues.push({
-                severity: netRecvPct > 40 ? 'warning' : 'info',
-                title: 'High Network Receive Overhead',
-                body: `Network packet processing takes <strong>${netRecvPct.toFixed(1)}%</strong> of tick time. ` +
-                    `Usually caused by many players or heavy packet handlers (anticheats).`,
-                metrics: [`${netRecvPct.toFixed(1)}% of tick`],
-                rec: 'Check DataPacketReceiveEvent handlers. Anticheats and packet-heavy plugins are common culprits.',
-            });
-        }
-
-        // 6. Network send overhead
-        const netSendMain = nodes.filter(n => n.name === 'Player Network Send');
-        const totalNetSend = netSendMain.reduce((s, n) => s + n.time, 0);
-        const netSendPct = (totalNetSend / totalTickNs) * 100;
-        if (netSendPct > 15) {
-            issues.push({
-                severity: netSendPct > 30 ? 'warning' : 'info',
-                title: 'High Network Send Overhead',
-                body: `Sending packets takes <strong>${netSendPct.toFixed(1)}%</strong> of tick time. ` +
-                    `This usually means many players, high entity counts, or excessive packet broadcasting.`,
-                metrics: [`${netSendPct.toFixed(1)}% of tick`],
-                rec: 'Reduce view distance, limit entity count, or check for plugins that broadcast packets excessively.',
-            });
-        }
-
-        // 7. Chunk loading on main thread
-        const chunkLoads = nodes.filter(n => n.name.endsWith(' - Chunk Load'));
-        const totalChunkMs = chunkLoads.reduce((s, n) => s + n.time, 0) / 1_000_000;
-        const chunkPct = (chunkLoads.reduce((s, n) => s + n.time, 0) / totalTickNs) * 100;
-        if (chunkPct > 5) {
-            issues.push({
-                severity: chunkPct > 15 ? 'warning' : 'info',
-                title: 'Chunk Loading Overhead',
-                body: `Chunk loading took <strong>${totalChunkMs.toFixed(0)}ms</strong> total (<strong>${chunkPct.toFixed(1)}%</strong> of tick time).`,
-                metrics: [`${chunkPct.toFixed(1)}% of tick`, `total: ${totalChunkMs.toFixed(0)}ms`],
-                rec: 'Consider pre-generating chunks in frequently visited areas. Reduce view distance if needed.',
-            });
-        }
-
-        // 8. Random chunk updates
-        const randomUpdates = nodes.filter(n => n.name.endsWith(' - Random Chunk Updates'));
-        const totalRandomMs = randomUpdates.reduce((s, n) => s + n.time, 0) / 1_000_000;
-        const randomPct = (randomUpdates.reduce((s, n) => s + n.time, 0) / totalTickNs) * 100;
-        if (randomPct > 10) {
-            issues.push({
-                severity: randomPct > 20 ? 'warning' : 'info',
-                title: 'Heavy Random Chunk Updates',
-                body: `Random tick updates take <strong>${randomPct.toFixed(1)}%</strong> of tick time across all worlds.`,
-                metrics: [`${randomPct.toFixed(1)}% of tick`],
-                rec: 'Reduce random-tick-speed in pocketmine.yml or unload unused worlds.',
-            });
-        }
-
-        // 9. Neighbour block updates
-        const neighbourUpdates = nodes.filter(n => n.name.endsWith(' - Neighbour Block Updates'));
-        const totalNeighbourMs = neighbourUpdates.reduce((s, n) => s + n.time, 0) / 1_000_000;
-        const neighbourPct = (neighbourUpdates.reduce((s, n) => s + n.time, 0) / totalTickNs) * 100;
-        if (neighbourPct > 8) {
-            issues.push({
-                severity: neighbourPct > 15 ? 'warning' : 'info',
-                title: 'Neighbour Block Update Overhead',
-                body: `Neighbour block updates take <strong>${neighbourPct.toFixed(1)}%</strong> of tick time (<strong>${totalNeighbourMs.toFixed(0)}ms</strong> total). ` +
-                    `This happens when many blocks change state (water flow, redstone, explosions).`,
-                metrics: [`${neighbourPct.toFixed(1)}% of tick`, `total: ${totalNeighbourMs.toFixed(0)}ms`],
-                rec: 'Consider limiting neighbour update rate per tick. Large-scale block changes (explosions, world edits) trigger cascading updates.',
-            });
-        }
-
-        // 10. Scheduled block updates
-        const scheduledUpdates = nodes.filter(n => n.name.endsWith(' - Scheduled Block Updates'));
-        const totalScheduledMs = scheduledUpdates.reduce((s, n) => s + n.time, 0) / 1_000_000;
-        const scheduledPct = (scheduledUpdates.reduce((s, n) => s + n.time, 0) / totalTickNs) * 100;
-        if (scheduledPct > 5) {
-            issues.push({
-                severity: scheduledPct > 12 ? 'warning' : 'info',
-                title: 'Scheduled Block Update Overhead',
-                body: `Scheduled block updates take <strong>${scheduledPct.toFixed(1)}%</strong> of tick time. ` +
-                    `Common with water/lava flow, falling blocks, and redstone.`,
-                metrics: [`${scheduledPct.toFixed(1)}% of tick`],
-                rec: 'Consider limiting scheduled block updates per tick or disabling liquid flow in heavily loaded worlds.',
-            });
-        }
-
-        // 11. Heavy event handlers (from plugin section)
-        const eventHandlers = nodes.filter(n =>
-            n.name.includes('->') && n.name.includes('Event') && !n.name.includes('ModalFormResponse')
-        );
-        for (const eh of eventHandlers) {
-            const pct = (eh.time / totalTickNs) * 100;
+        // Network recv/send, chunks, random, neighbour, scheduled, explosions
+        this._pctIssue(nodes, T, 'Player Network Receive', 25, 40, 'issNetRecv', 'recNetRecv', issues);
+        this._pctIssue(nodes, T, 'Player Network Send', 15, 30, 'issNetSend', 'recNetSend', issues);
+        this._endsWith(nodes, T, ' - Chunk Load', 5, 15, 'issChunk', 'recChunk', issues);
+        this._endsWith(nodes, T, ' - Random Chunk Updates', 10, 20, 'issRandom', 'recRandom', issues);
+        this._endsWith(nodes, T, ' - Neighbour Block Updates', 8, 15, 'issNeighbour', 'recNeighbour', issues);
+        this._endsWith(nodes, T, ' - Scheduled Block Updates', 5, 12, 'issScheduled', 'recScheduled', issues);
+        // Explosions
+        const expl = nodes.filter(n => n.name.includes('Explosion'));
+        const explPct = (expl.reduce((s, n) => s + n.time, 0) / T) * 100;
+        if (explPct > 3) add(explPct > 8 ? 'warning' : 'info', 'issExplosion', '', `${explPct.toFixed(1)}% tick`,
+            [`${explPct.toFixed(1)}%`], 'recExplosion');
+        // Event handlers
+        for (const eh of nodes.filter(n => n.name.includes('->') && n.name.includes('Event') && !n.name.includes('ModalFormResponse'))) {
+            const pct = (eh.time / T) * 100;
             if (pct > 3 || eh.violations > 3) {
-                const avgMs = eh.avg / 1_000_000;
-                const peakMs = eh.peak / 1_000_000;
-                // Skip if task already reported
-                if (issues.some(i => i.title.includes(this._shortName(eh.name)))) continue;
-                issues.push({
-                    severity: eh.violations > 10 ? 'warning' : 'info',
-                    title: `Heavy Event Handler: ${this._shortName(eh.name)}`,
-                    body: `Takes <strong>${pct.toFixed(1)}%</strong> of tick time (avg <strong>${avgMs.toFixed(1)}ms</strong>, peak <strong>${peakMs.toFixed(0)}ms</strong>). ` +
-                        `${eh.violations} violations, ${eh.count} calls.`,
-                    metrics: [`${pct.toFixed(1)}% of tick`, `avg: ${avgMs.toFixed(1)}ms`, `violations: ${eh.violations}`],
-                    rec: 'This event handler is taking significant time. Check if it can be optimized or if some work can be deferred.',
-                });
+                if (issues.some(i => i.title && i.title.includes(this._short(eh.name)))) continue;
+                add(eh.violations > 10 ? 'warning' : 'info', 'issEvent',
+                    `${t('issEvent')}: ${this._short(eh.name)}`,
+                    `${pct.toFixed(1)}% tick, avg ${(eh.avg / 1e6).toFixed(1)}ms, ${eh.violations}v`,
+                    [`${pct.toFixed(1)}%`, `violations: ${eh.violations}`], 'recViolations');
             }
         }
-
-        // 12. Explosion overhead
-        const explosions = nodes.filter(n => n.name.includes('Explosion'));
-        const totalExplosionNs = explosions.reduce((s, n) => s + n.time, 0);
-        const explosionPct = (totalExplosionNs / totalTickNs) * 100;
-        if (explosionPct > 3) {
-            issues.push({
-                severity: explosionPct > 8 ? 'warning' : 'info',
-                title: 'Explosion Processing Overhead',
-                body: `Explosions take <strong>${explosionPct.toFixed(1)}%</strong> of tick time (<strong>${(totalExplosionNs / 1_000_000).toFixed(0)}ms</strong> total).`,
-                metrics: [`${explosionPct.toFixed(1)}% of tick`],
-                rec: 'Limit TNT/creeper explosions or reduce explosion radius. Consider queuing explosions across ticks.',
-            });
+        // High violations
+        const hv = nodes.filter(n => n.violations > 3 && !['Full Server Tick', 'Server Tick Update Cycle', 'Server Mid-Tick Processing'].includes(n.name))
+            .sort((a, b) => b.violations - a.violations).slice(0, 5);
+        for (const e of hv) {
+            if (issues.some(i => i.title && i.title.includes(this._short(e.name)))) continue;
+            if (['Cyclic Garbage Collector', 'Memory Manager'].includes(e.name)) continue;
+            if (e.name.includes('Connection Handler') || e.name.includes('Player Network') || e.name.endsWith(' - World Tick')) continue;
+            add(e.violations > 20 ? 'warning' : 'info', 'issViolations',
+                `${t('issViolations')}: ${this._short(e.name)}`,
+                `${e.violations}v, avg ${(e.avg / 1e6).toFixed(1)}ms, peak ${(e.peak / 1e6).toFixed(0)}ms`,
+                [`violations: ${e.violations}`], 'recViolations');
         }
-
-        // 13. High violations entries (top 5 non-root, not already reported)
-        const highViolations = nodes
-            .filter(n => n.violations > 3 && n.name !== 'Full Server Tick' && n.name !== 'Server Tick Update Cycle' && n.name !== 'Server Mid-Tick Processing')
-            .sort((a, b) => b.violations - a.violations)
-            .slice(0, 5);
-
-        for (const entry of highViolations) {
-            if (issues.some(i => i.title.includes(this._shortName(entry.name)))) continue;
-            if (entry.name === 'Cyclic Garbage Collector' || entry.name === 'Memory Manager') continue;
-            if (entry.name.includes('Connection Handler') || entry.name.includes('Player Network')) continue;
-            if (entry.name.endsWith(' - World Tick')) continue;
-
-            const avgMs = entry.avg / 1_000_000;
-            const peakMs = entry.peak / 1_000_000;
-            issues.push({
-                severity: entry.violations > 20 ? 'warning' : 'info',
-                title: `High Violations: ${this._shortName(entry.name)}`,
-                body: `<strong>${entry.violations}</strong> violations (avg <strong>${avgMs.toFixed(1)}ms</strong>, peak <strong>${peakMs.toFixed(0)}ms</strong>).`,
-                metrics: [`violations: ${entry.violations}`, `avg: ${avgMs.toFixed(1)}ms`, `peak: ${peakMs.toFixed(0)}ms`],
-                rec: 'Investigate what causes spikes in this operation.',
-            });
-        }
-
-        // Sort by severity
-        const order = { critical: 0, warning: 1, info: 2 };
-        issues.sort((a, b) => order[a.severity] - order[b.severity]);
+        issues.sort((a, b) => ({ critical: 0, warning: 1, info: 2 }[a.severity] - { critical: 0, warning: 1, info: 2 }[b.severity]));
+        // Resolve title from key
+        for (const i of issues) if (!i.title && i.titleKey) i.title = t(i.titleKey);
         return issues;
     }
-
-    _shortName(name) {
-        return name
-            .replace(/^Task:\s*/, '')
-            .replace(/.*\\([^\\]+)$/, '$1')
-            .replace(/\(interval:\d+\)/, '')
-            .replace(/\(Single\)/, '')
-            .replace(/-&gt;/g, '→')
-            .replace(/->/g, '→')
-            .trim();
+    _pctIssue(nodes, T, name, thInfo, thWarn, titleKey, recKey, issues) {
+        const tot = nodes.filter(n => n.name === name).reduce((s, n) => s + n.time, 0);
+        const pct = (tot / T) * 100;
+        if (pct > thInfo) issues.push({ severity: pct > thWarn ? 'warning' : 'info', titleKey, title: t(titleKey),
+            body: `${pct.toFixed(1)}% tick`, metrics: [`${pct.toFixed(1)}%`], recKey });
     }
+    _endsWith(nodes, T, suffix, thInfo, thWarn, titleKey, recKey, issues) {
+        const tot = nodes.filter(n => n.name.endsWith(suffix)).reduce((s, n) => s + n.time, 0);
+        const pct = (tot / T) * 100;
+        if (pct > thInfo) issues.push({ severity: pct > thWarn ? 'warning' : 'info', titleKey, title: t(titleKey),
+            body: `${pct.toFixed(1)}% tick (${(tot / 1e6).toFixed(0)}ms total)`, metrics: [`${pct.toFixed(1)}%`], recKey });
+    }
+    _short(n) { return n.replace(/^Task:\s*/, '').replace(/.*\\([^\\]+)$/, '$1').replace(/\(interval:\d+\)/, '')
+        .replace(/\(Single\)/, '').replace(/-&gt;/g, '\u2192').replace(/->/g, '\u2192').trim(); }
+    _health(tps, avg, peak, viol, ticks, issues) {
+        let s = 100;
+        if (tps < 19.5) s -= Math.min(30, (20 - tps) * 15);
+        if (avg > 10) s -= Math.min(20, (avg - 10) * 0.5);
+        const vr = viol / Math.max(1, ticks);
+        if (vr > 0.01) s -= Math.min(20, vr * 500);
+        if (peak > 100) s -= Math.min(15, (peak - 100) / 50);
+        s -= Math.min(15, issues.filter(i => i.severity === 'critical').length * 5 + issues.filter(i => i.severity === 'warning').length * 2);
+        return Math.max(0, Math.min(100, Math.round(s)));
+    }
+}
 
-    _calcHealth(tps, avgTickMs, peakTickMs, violations, ticks, issues) {
-        let score = 100;
+// ─── Aggregator ─────────────────────────────────────────────
 
-        // TPS impact (0-30 points)
-        if (tps < 19.5) score -= Math.min(30, (20 - tps) * 15);
+class TimingsAggregator {
+    aggregate(reports) {
+        const n = reports.length;
+        const avgHealth = Math.round(reports.reduce((s, r) => s + r.analysis.health, 0) / n);
+        const worstHealth = Math.min(...reports.map(r => r.analysis.health));
+        const totalIssues = reports.reduce((s, r) => s + r.analysis.issues.length, 0);
 
-        // Avg tick impact (0-20 points)
-        if (avgTickMs > 10) score -= Math.min(20, (avgTickMs - 10) * 0.5);
+        // Common issues by titleKey
+        const issueMap = {};
+        reports.forEach((r, idx) => {
+            for (const iss of r.analysis.issues) {
+                const key = iss.title || iss.titleKey;
+                if (!issueMap[key]) issueMap[key] = { titleKey: iss.titleKey, title: iss.title, severity: iss.severity, recKey: iss.recKey, reports: [] };
+                issueMap[key].reports.push(idx);
+                if ({ critical: 0, warning: 1, info: 2 }[iss.severity] < { critical: 0, warning: 1, info: 2 }[issueMap[key].severity])
+                    issueMap[key].severity = iss.severity;
+            }
+        });
+        const commonIssues = Object.values(issueMap).sort((a, b) => b.reports.length - a.reports.length);
 
-        // Violations rate (0-20 points)
-        const violationRate = violations / Math.max(1, ticks);
-        if (violationRate > 0.01) score -= Math.min(20, violationRate * 500);
+        // Smart recommendations
+        const recs = this._smartRecs(reports, commonIssues, n);
 
-        // Peak impact (0-15 points)
-        if (peakTickMs > 100) score -= Math.min(15, (peakTickMs - 100) / 50);
-
-        // Critical issues (0-15 points)
-        const criticals = issues.filter(i => i.severity === 'critical').length;
-        const warnings = issues.filter(i => i.severity === 'warning').length;
-        score -= Math.min(15, criticals * 5 + warnings * 2);
-
-        return Math.max(0, Math.min(100, Math.round(score)));
+        return { avgHealth, worstHealth, totalIssues, commonIssues, recs, count: n };
+    }
+    _smartRecs(reports, commonIssues, n) {
+        const recs = [];
+        // GC
+        const gcIssue = commonIssues.find(i => i.titleKey === 'issGc');
+        if (gcIssue) {
+            recs.push({ severity: gcIssue.reports.length === n ? 'critical' : 'warning',
+                text: gcIssue.reports.length === n ? t('aggRecGcAll') : tReplace('aggRecGcSome', { n: gcIssue.reports.length, total: n }),
+                reports: gcIssue.reports });
+        }
+        // Forms
+        const formIssue = commonIssues.find(i => i.titleKey === 'issForm');
+        if (formIssue && formIssue.reports.length >= Math.ceil(n / 2)) {
+            recs.push({ severity: 'warning', text: t('aggRecFormAll'), reports: formIssue.reports });
+        }
+        // Heaviest plugin
+        const pluginMap = {};
+        reports.forEach((r, idx) => {
+            if (r.analysis.pluginImpact.length > 0) {
+                const top = r.analysis.pluginImpact[0];
+                const pName = top.name.split(' ')[0];
+                if (!pluginMap[pName]) pluginMap[pName] = { name: top.name, pcts: [], reports: [] };
+                pluginMap[pName].pcts.push(top.pct);
+                pluginMap[pName].reports.push(idx);
+            }
+        });
+        for (const [, p] of Object.entries(pluginMap)) {
+            if (p.reports.length >= Math.ceil(n / 2)) {
+                const avgPct = (p.pcts.reduce((s, v) => s + v, 0) / p.pcts.length).toFixed(1);
+                recs.push({ severity: 'warning',
+                    text: tReplace('aggRecPluginHeavy', { name: p.name, n: p.reports.length, pct: avgPct }),
+                    reports: p.reports });
+            }
+        }
+        // Chunk / network
+        const chunkNet = commonIssues.filter(i => ['issChunk', 'issNetRecv', 'issNetSend'].includes(i.titleKey));
+        const cnReports = new Set(chunkNet.flatMap(i => i.reports));
+        if (cnReports.size >= 2) {
+            recs.push({ severity: 'info', text: tReplace('aggRecViewDist', { n: cnReports.size }),
+                reports: [...cnReports] });
+        }
+        // Entities
+        const entIssues = commonIssues.filter(i => i.titleKey === 'issEntity');
+        const entReports = new Set(entIssues.flatMap(i => i.reports));
+        if (entReports.size >= 2) {
+            recs.push({ severity: 'warning', text: tReplace('aggRecEntities', { n: entReports.size }),
+                reports: [...entReports] });
+        }
+        return recs;
     }
 }
 
 // ─── UI ─────────────────────────────────────────────────────
 
 class TimingsUI {
-    constructor() {
-        this.reports = [];
-    }
-
-    renderMultiple(reports) {
-        this.reports = reports;
+    renderMultiple(reports, labels) {
         const container = document.getElementById('reports-container');
         const tabsEl = document.getElementById('report-tabs');
+        const aggEl = document.getElementById('aggregate');
         container.innerHTML = '';
 
-        const isMulti = reports.length > 1;
+        const multi = reports.length > 1;
 
-        if (isMulti) {
+        // Aggregate
+        if (multi) {
+            aggEl.classList.remove('hidden');
+            const agg = new TimingsAggregator().aggregate(reports);
+            this._renderAggregate(aggEl, agg, reports, labels);
+        } else { aggEl.classList.add('hidden'); }
+
+        // Tabs
+        if (multi) {
             tabsEl.classList.remove('hidden');
             tabsEl.innerHTML = reports.map((r, i) => {
-                const label = this._reportLabel(r, i);
-                const hClass = r.analysis.health >= 80 ? 'good' : r.analysis.health >= 50 ? 'warn' : 'bad';
-                return `<button class="report-tab ${i === 0 ? 'active' : ''}" data-report="${i}">${label} <span class="report-tab__health report-tab__health--${hClass}">${r.analysis.health}</span></button>`;
+                const hc = r.analysis.health >= 80 ? 'good' : r.analysis.health >= 50 ? 'warn' : 'bad';
+                return `<button class="report-tab ${i === 0 ? 'active' : ''}" data-r="${i}">${labels[i]} <span class="rt-health rt-health--${hc}">${r.analysis.health}</span></button>`;
             }).join('');
-
-            tabsEl.addEventListener('click', (e) => {
+            tabsEl.onclick = e => {
                 const tab = e.target.closest('.report-tab');
                 if (!tab) return;
-                const idx = parseInt(tab.dataset.report);
-                tabsEl.querySelectorAll('.report-tab').forEach(t => t.classList.remove('active'));
+                const idx = +tab.dataset.r;
+                tabsEl.querySelectorAll('.report-tab').forEach(t2 => t2.classList.remove('active'));
                 tab.classList.add('active');
-                container.querySelectorAll('.report-container').forEach((c, i) => {
-                    c.classList.toggle('active', i === idx);
-                });
-            });
-        } else {
-            tabsEl.classList.add('hidden');
-        }
+                container.querySelectorAll('.report-container').forEach((c, i) => c.classList.toggle('active', i === idx));
+            };
+        } else { tabsEl.classList.add('hidden'); }
 
         reports.forEach((r, i) => {
             const div = document.createElement('div');
             div.className = `report-container ${i === 0 ? 'active' : ''}`;
-            div.id = `report-${i}`;
-            div.innerHTML = this._reportHTML(i);
+            div.innerHTML = this._reportHTML();
             container.appendChild(div);
-            this._renderReport(div, r.parsed, r.analysis);
+            this._fillReport(div, r.parsed, r.analysis);
         });
 
         document.getElementById('results').classList.remove('hidden');
-        document.getElementById('hero').style.minHeight = 'auto';
-        document.getElementById('hero').style.paddingTop = '20px';
-        document.getElementById('hero').style.paddingBottom = '16px';
-
-        setTimeout(() => {
-            (isMulti ? tabsEl : container).scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 100);
+        const hero = document.getElementById('hero');
+        hero.style.minHeight = 'auto';
+        hero.style.paddingTop = '20px';
+        hero.style.paddingBottom = '16px';
+        setTimeout(() => (multi ? aggEl : container).scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     }
 
-    _reportLabel(report, index) {
-        const meta = report.analysis.meta;
-        if (meta.version) {
-            const ver = meta.version.replace(/^v/, '');
-            return `Report ${index + 1} (v${ver})`;
+    _renderAggregate(el, agg, reports, labels) {
+        const hc = v => v >= 80 ? 'good' : v >= 50 ? 'warn' : 'bad';
+        const tpsCls = v => v >= 19.5 ? 'val-good' : v >= 18 ? 'val-warn' : 'val-bad';
+
+        let html = `<h2 class="agg-header">${t('aggTitle')}</h2>`;
+
+        // Summary cards
+        html += `<div class="agg-metrics">
+            <div class="metric-card metric-card--info"><div class="metric-card__value">${agg.count}</div><div class="metric-card__label">${t('aggReports')}</div></div>
+            <div class="metric-card metric-card--${hc(agg.avgHealth)}"><div class="metric-card__value">${agg.avgHealth}</div><div class="metric-card__label">${t('aggAvgHealth')}</div></div>
+            <div class="metric-card metric-card--${hc(agg.worstHealth)}"><div class="metric-card__value">${agg.worstHealth}</div><div class="metric-card__label">${t('aggWorstHealth')}</div></div>
+            <div class="metric-card metric-card--${agg.totalIssues < 20 ? 'good' : agg.totalIssues < 100 ? 'warn' : 'bad'}"><div class="metric-card__value">${agg.totalIssues}</div><div class="metric-card__label">${t('aggTotalIssues')}</div></div>
+        </div>`;
+
+        // Comparison table
+        html += `<div class="agg-table-wrap"><table class="agg-table">
+            <thead><tr><th>${t('aggTableReport')}</th><th>${t('aggTableTps')}</th><th>${t('aggTableAvgTick')}</th><th>${t('aggTablePeak')}</th><th>${t('aggTableViolations')}</th><th>${t('aggTablePlayers')}</th><th>${t('aggTableHealth')}</th></tr></thead><tbody>`;
+        reports.forEach((r, i) => {
+            const a = r.analysis;
+            html += `<tr>
+                <td>${labels[i]}</td>
+                <td class="${tpsCls(a.tps)}">${a.tps.toFixed(2)}</td>
+                <td>${a.avgTickMs.toFixed(1)}ms</td>
+                <td class="${a.peakTickMs > 300 ? 'val-bad' : a.peakTickMs > 100 ? 'val-warn' : 'val-good'}">${a.peakTickMs.toFixed(0)}ms</td>
+                <td class="${a.totalViolations > 100 ? 'val-bad' : a.totalViolations > 10 ? 'val-warn' : 'val-good'}">${a.totalViolations}</td>
+                <td>${a.avgPlayers.toFixed(1)}</td>
+                <td class="${hc(a.health) === 'good' ? 'val-good' : hc(a.health) === 'warn' ? 'val-warn' : 'val-bad'}">${a.health}/100</td>
+            </tr>`;
+        });
+        html += '</tbody></table></div>';
+
+        // Recommendations
+        html += `<div class="agg-recs"><div class="agg-recs__title">${t('aggRecsTitle')}</div>`;
+        if (agg.recs.length === 0 && agg.commonIssues.length === 0) {
+            html += `<div class="agg-rec-item"><div class="agg-rec-item__body">${t('aggNoIssues')}</div></div>`;
+        } else {
+            for (const rec of agg.recs) {
+                html += `<div class="agg-rec-item agg-rec-item--${rec.severity}">
+                    <div class="agg-rec-item__title">${rec.text}</div>
+                    <div class="agg-rec-item__servers">${t('foundOn')}: ${rec.reports.map(i => labels[i]).join(', ')}</div>
+                </div>`;
+            }
+            // Top common issues not covered by recs
+            const recKeys = new Set(agg.recs.flatMap(r => [r.text]));
+            for (const ci of agg.commonIssues.slice(0, 8)) {
+                if (ci.reports.length < 2) continue;
+                html += `<div class="agg-rec-item agg-rec-item--${ci.severity}">
+                    <div class="agg-rec-item__title">${ci.title || t(ci.titleKey)} (${ci.reports.length}/${agg.count})</div>
+                    <div class="agg-rec-item__body">${ci.recKey ? t(ci.recKey) : ''}</div>
+                    <div class="agg-rec-item__servers">${t('foundOn')}: ${ci.reports.map(i => labels[i]).join(', ')}</div>
+                </div>`;
+            }
         }
-        return `Report ${index + 1}`;
+        html += '</div>';
+        el.innerHTML = html;
     }
 
-    _reportHTML(idx) {
-        return `
-            <section class="section">
-                <h2 class="section__title">Dashboard</h2>
-                <div class="metrics-grid" data-el="metrics-grid"></div>
-                <div class="health-bar-wrap">
-                    <div class="health-label">Server Health</div>
-                    <div class="health-bar"><div class="health-bar__fill" data-el="health-fill"></div></div>
-                    <div class="health-score" data-el="health-score"></div>
-                </div>
-            </section>
-            <section class="section">
-                <h2 class="section__title">Detected Issues <span class="badge" data-el="issues-count"></span></h2>
-                <div data-el="issues-list"></div>
-            </section>
-            <section class="section" data-el="worlds-section">
-                <h2 class="section__title">World Load Distribution</h2>
-                <div data-el="worlds-chart"></div>
-            </section>
-            <section class="section" data-el="plugins-section">
-                <h2 class="section__title">Plugin Impact</h2>
-                <div data-el="plugins-list"></div>
-            </section>
-            <section class="section">
-                <h2 class="section__title">Timings Tree</h2>
-                <div class="tree-controls">
-                    <button class="btn-sm" data-el="btn-expand-all">Expand All</button>
-                    <button class="btn-sm" data-el="btn-collapse-all">Collapse All</button>
-                    <input type="text" class="tree-search" data-el="tree-search" placeholder="Filter...">
-                </div>
-                <div class="tree-view" data-el="tree-view"></div>
-            </section>`;
+    _reportHTML() {
+        return `<section class="section"><h2 class="section__title" data-i18n="dashboard">${t('dashboard')}</h2>
+            <div class="metrics-grid" data-el="mg"></div>
+            <div class="health-bar-wrap"><div class="health-label" data-i18n="serverHealth">${t('serverHealth')}</div>
+            <div class="health-bar"><div class="health-bar__fill" data-el="hf"></div></div>
+            <div class="health-score" data-el="hs"></div></div></section>
+            <section class="section"><h2 class="section__title" data-i18n="detectedIssues">${t('detectedIssues')} <span class="badge" data-el="ic"></span></h2><div data-el="il"></div></section>
+            <section class="section" data-el="ws"><h2 class="section__title" data-i18n="worldLoad">${t('worldLoad')}</h2><div data-el="wc"></div></section>
+            <section class="section" data-el="ps"><h2 class="section__title" data-i18n="pluginImpact">${t('pluginImpact')}</h2><div data-el="pl"></div></section>
+            <section class="section"><h2 class="section__title" data-i18n="timingsTree">${t('timingsTree')}</h2>
+            <div class="tree-controls"><button class="btn-sm" data-el="ea">${t('expandAll')}</button>
+            <button class="btn-sm" data-el="ca">${t('collapseAll')}</button>
+            <input type="text" class="tree-search" data-el="ts" placeholder="${t('filter')}"></div>
+            <div class="tree-view" data-el="tv"></div></section>`;
     }
 
-    _el(container, name) {
-        return container.querySelector(`[data-el="${name}"]`);
-    }
+    _el(c, n) { return c.querySelector(`[data-el="${n}"]`); }
 
-    _renderReport(container, parsed, analysis) {
-        this._renderMetrics(container, analysis);
-        this._renderHealth(container, analysis.health);
-        this._renderIssues(container, analysis.issues);
-        this._renderWorlds(container, analysis.worlds);
-        this._renderPlugins(container, analysis.pluginImpact);
-        this._renderTree(container, parsed.roots);
-        this._bindTreeControls(container);
-    }
-
-    _renderMetrics(container, a) {
-        const grid = this._el(container, 'metrics-grid');
+    _fillReport(c, parsed, a) {
+        // Metrics
+        const g = this._el(c, 'mg');
         const metrics = [
-            { label: 'TPS', value: a.tps.toFixed(2), cls: a.tps >= 19.5 ? 'good' : a.tps >= 18 ? 'warn' : 'bad' },
-            { label: 'Avg Tick', value: `${a.avgTickMs.toFixed(1)}ms`, cls: a.avgTickMs < 20 ? 'good' : a.avgTickMs < 40 ? 'warn' : 'bad' },
-            { label: 'Peak Tick', value: `${a.peakTickMs.toFixed(0)}ms`, cls: a.peakTickMs < 100 ? 'good' : a.peakTickMs < 300 ? 'warn' : 'bad' },
-            { label: 'Violations', value: a.totalViolations.toLocaleString(), cls: a.totalViolations < 10 ? 'good' : a.totalViolations < 100 ? 'warn' : 'bad' },
-            { label: 'Avg Players', value: a.avgPlayers.toFixed(1), cls: 'info' },
-            { label: 'Avg Entities', value: a.avgEntities.toFixed(0), cls: 'info' },
-            { label: 'Thread Load', value: `${a.mainThreadLoad.toFixed(1)}%`, cls: a.mainThreadLoad < 50 ? 'good' : a.mainThreadLoad < 80 ? 'warn' : 'bad' },
-            { label: 'Sample Time', value: a.sampleTimeFormatted, cls: 'info' },
+            { l: t('mTps'), v: a.tps.toFixed(2), c: a.tps >= 19.5 ? 'good' : a.tps >= 18 ? 'warn' : 'bad' },
+            { l: t('mAvgTick'), v: `${a.avgTickMs.toFixed(1)}ms`, c: a.avgTickMs < 20 ? 'good' : a.avgTickMs < 40 ? 'warn' : 'bad' },
+            { l: t('mPeakTick'), v: `${a.peakTickMs.toFixed(0)}ms`, c: a.peakTickMs < 100 ? 'good' : a.peakTickMs < 300 ? 'warn' : 'bad' },
+            { l: t('mViolations'), v: a.totalViolations.toLocaleString(), c: a.totalViolations < 10 ? 'good' : a.totalViolations < 100 ? 'warn' : 'bad' },
+            { l: t('mPlayers'), v: a.avgPlayers.toFixed(1), c: 'info' },
+            { l: t('mEntities'), v: a.avgEntities.toFixed(0), c: 'info' },
+            { l: t('mThreadLoad'), v: `${a.mainThreadLoad.toFixed(1)}%`, c: a.mainThreadLoad < 50 ? 'good' : a.mainThreadLoad < 80 ? 'warn' : 'bad' },
+            { l: t('mSampleTime'), v: a.sampleTimeFormatted, c: 'info' },
         ];
+        g.innerHTML = metrics.map(m => `<div class="metric-card metric-card--${m.c}"><div class="metric-card__value">${m.v}</div><div class="metric-card__label">${m.l}</div></div>`).join('');
 
-        grid.innerHTML = metrics.map(m => `
-            <div class="metric-card metric-card--${m.cls}">
-                <div class="metric-card__value">${m.value}</div>
-                <div class="metric-card__label">${m.label}</div>
-            </div>
-        `).join('');
-    }
+        // Health
+        const color = a.health >= 80 ? '#3fb950' : a.health >= 50 ? '#d29922' : '#f85149';
+        this._el(c, 'hf').style.cssText = `width:${a.health}%;background:${color}`;
+        const hs = this._el(c, 'hs'); hs.textContent = `${a.health}/100`; hs.style.color = color;
 
-    _renderHealth(container, score) {
-        const fill = this._el(container, 'health-fill');
-        const scoreEl = this._el(container, 'health-score');
-        const color = score >= 80 ? '#3fb950' : score >= 50 ? '#d29922' : '#f85149';
-
-        fill.style.width = `${score}%`;
-        fill.style.background = color;
-        scoreEl.textContent = `${score}/100`;
-        scoreEl.style.color = color;
-    }
-
-    _renderIssues(container, issues) {
-        const list = this._el(container, 'issues-list');
-        const countBadge = this._el(container, 'issues-count');
-        countBadge.textContent = issues.length;
-
-        if (issues.length === 0) {
-            list.innerHTML = '<div class="issue-card issue-card--info"><div class="issue-card__title">No issues detected! Your server is running great.</div></div>';
-            return;
-        }
-
-        list.innerHTML = issues.map(i => `
-            <div class="issue-card issue-card--${i.severity}">
-                <div class="issue-card__header">
-                    <span class="issue-card__severity issue-card__severity--${i.severity}">${i.severity}</span>
-                    <span class="issue-card__title">${i.title}</span>
-                </div>
+        // Issues
+        this._el(c, 'ic').textContent = a.issues.length;
+        const il = this._el(c, 'il');
+        if (a.issues.length === 0) {
+            il.innerHTML = `<div class="issue-card issue-card--info"><div class="issue-card__title">${t('noIssues')}</div></div>`;
+        } else {
+            il.innerHTML = a.issues.map(i => `<div class="issue-card issue-card--${i.severity}">
+                <div class="issue-card__header"><span class="issue-card__severity issue-card__severity--${i.severity}">${i.severity}</span>
+                <span class="issue-card__title">${i.title}</span></div>
                 <div class="issue-card__body">${i.body}</div>
                 <div>${i.metrics.map(m => `<span class="issue-card__metric">${m}</span> `).join('')}</div>
-                ${i.rec ? `<div class="issue-card__rec">\u2192 ${i.rec}</div>` : ''}
-            </div>
-        `).join('');
-    }
+                ${i.recKey ? `<div class="issue-card__rec">\u2192 ${t(i.recKey)}</div>` : ''}
+            </div>`).join('');
+        }
 
-    _renderWorlds(container, worlds) {
-        const chart = this._el(container, 'worlds-chart');
-        const section = this._el(container, 'worlds-section');
+        // Worlds
+        const ws = this._el(c, 'ws'), wc = this._el(c, 'wc');
+        if (a.worlds.length === 0) { ws.classList.add('hidden'); }
+        else {
+            ws.classList.remove('hidden');
+            const mx = Math.max(...a.worlds.map(w => w.avgMs));
+            wc.innerHTML = a.worlds.map(w => `<div class="world-row"><span class="world-row__name" title="${w.name}">${w.name}</span>
+                <div class="world-row__bar-wrap"><div class="world-row__bar" style="width:${(w.avgMs / mx * 100).toFixed(1)}%"></div></div>
+                <span class="world-row__value">${w.avgMs.toFixed(2)}ms (${w.pct.toFixed(1)}%)</span></div>`).join('');
+        }
 
-        if (worlds.length === 0) { section.classList.add('hidden'); return; }
-        section.classList.remove('hidden');
-
-        const maxMs = Math.max(...worlds.map(w => w.avgMs));
-
-        chart.innerHTML = worlds.map(w => `
-            <div class="world-row">
-                <span class="world-row__name" title="${w.name}">${w.name}</span>
-                <div class="world-row__bar-wrap">
-                    <div class="world-row__bar" style="width:${(w.avgMs / maxMs * 100).toFixed(1)}%"></div>
-                </div>
-                <span class="world-row__value">${w.avgMs.toFixed(2)}ms (${w.pct.toFixed(1)}%)</span>
-            </div>
-        `).join('');
-    }
-
-    _renderPlugins(container, plugins) {
-        const list = this._el(container, 'plugins-list');
-        const section = this._el(container, 'plugins-section');
-
-        if (plugins.length === 0) { section.classList.add('hidden'); return; }
-        section.classList.remove('hidden');
-
-        list.innerHTML = plugins.slice(0, 20).map((p, i) => `
-            <div class="plugin-row">
-                <span class="plugin-row__rank">${i + 1}</span>
-                <span class="plugin-row__name" title="${p.name}">${p.name}</span>
+        // Plugins
+        const ps = this._el(c, 'ps'), pl = this._el(c, 'pl');
+        if (a.pluginImpact.length === 0) { ps.classList.add('hidden'); }
+        else {
+            ps.classList.remove('hidden');
+            pl.innerHTML = a.pluginImpact.slice(0, 20).map((p, i) => `<div class="plugin-row">
+                <span class="plugin-row__rank">${i + 1}</span><span class="plugin-row__name" title="${p.name}">${p.name}</span>
                 <span class="plugin-row__time">${p.totalMs.toFixed(0)}ms${p.violations > 0 ? ` (${p.violations}v)` : ''}</span>
-                <span class="plugin-row__pct">${p.pct.toFixed(1)}%</span>
-            </div>
-        `).join('');
+                <span class="plugin-row__pct">${p.pct.toFixed(1)}%</span></div>`).join('');
+        }
+
+        // Tree
+        const tv = this._el(c, 'tv');
+        const T = parsed.roots.find(n => n.name === 'Full Server Tick')?.time || 1;
+        tv.innerHTML = this._tree(parsed.roots, T, 0);
+        tv.onclick = e => { const tg = e.target.closest('.tree-node__toggle'); if (!tg || tg.classList.contains('leaf')) return;
+            const ch = tg.closest('.tree-node').nextElementSibling;
+            if (ch?.classList.contains('tree-children')) { ch.classList.toggle('open'); tg.classList.toggle('expanded'); } };
+
+        // Tree controls
+        this._el(c, 'ea').onclick = () => { tv.querySelectorAll('.tree-children').forEach(x => x.classList.add('open'));
+            tv.querySelectorAll('.tree-node__toggle:not(.leaf)').forEach(x => x.classList.add('expanded')); };
+        this._el(c, 'ca').onclick = () => { tv.querySelectorAll('.tree-children').forEach(x => x.classList.remove('open'));
+            tv.querySelectorAll('.tree-node__toggle').forEach(x => x.classList.remove('expanded')); };
+        let st; this._el(c, 'ts').oninput = e => { clearTimeout(st); st = setTimeout(() => {
+            const q = e.target.value.toLowerCase().trim();
+            tv.querySelectorAll('.tree-node').forEach(nd => { const nm = (nd.dataset.name || '').toLowerCase();
+                if (!q) { nd.classList.remove('filtered-out', 'highlight'); }
+                else if (nm.includes(q)) { nd.classList.remove('filtered-out'); nd.classList.add('highlight');
+                    let p = nd.parentElement; while (p && p !== tv) { if (p.classList.contains('tree-children')) {
+                        p.classList.add('open'); p.previousElementSibling?.querySelector('.tree-node__toggle')?.classList.add('expanded'); }
+                        p = p.parentElement; } }
+                else { nd.classList.add('filtered-out'); nd.classList.remove('highlight'); } });
+        }, 200); };
     }
 
-    _renderTree(container, roots) {
-        const view = this._el(container, 'tree-view');
-        const totalTickNs = roots.find(n => n.name === 'Full Server Tick')?.time || 1;
-
-        const html = this._buildTreeHTML(roots, totalTickNs, 0);
-        view.innerHTML = html;
-
-        // Event delegation for toggle
-        view.addEventListener('click', (e) => {
-            const toggle = e.target.closest('.tree-node__toggle');
-            if (!toggle || toggle.classList.contains('leaf')) return;
-
-            const children = toggle.closest('.tree-node').nextElementSibling;
-            if (children && children.classList.contains('tree-children')) {
-                children.classList.toggle('open');
-                toggle.classList.toggle('expanded');
-            }
-        });
-    }
-
-    _bindTreeControls(container) {
-        const expandBtn = this._el(container, 'btn-expand-all');
-        const collapseBtn = this._el(container, 'btn-collapse-all');
-        const searchInput = this._el(container, 'tree-search');
-        const treeView = this._el(container, 'tree-view');
-
-        expandBtn.addEventListener('click', () => {
-            treeView.querySelectorAll('.tree-children').forEach(c => c.classList.add('open'));
-            treeView.querySelectorAll('.tree-node__toggle:not(.leaf)').forEach(t => t.classList.add('expanded'));
-        });
-        collapseBtn.addEventListener('click', () => {
-            treeView.querySelectorAll('.tree-children').forEach(c => c.classList.remove('open'));
-            treeView.querySelectorAll('.tree-node__toggle').forEach(t => t.classList.remove('expanded'));
-        });
-
-        let searchTimeout;
-        searchInput.addEventListener('input', (e) => {
-            clearTimeout(searchTimeout);
-            searchTimeout = setTimeout(() => {
-                const query = e.target.value.toLowerCase().trim();
-                treeView.querySelectorAll('.tree-node').forEach(node => {
-                    const name = (node.dataset.name || '').toLowerCase();
-                    if (!query) {
-                        node.classList.remove('filtered-out', 'highlight');
-                    } else if (name.includes(query)) {
-                        node.classList.remove('filtered-out');
-                        node.classList.add('highlight');
-                        let parent = node.parentElement;
-                        while (parent && parent !== treeView) {
-                            if (parent.classList.contains('tree-children')) {
-                                parent.classList.add('open');
-                                const prevToggle = parent.previousElementSibling?.querySelector('.tree-node__toggle');
-                                if (prevToggle) prevToggle.classList.add('expanded');
-                            }
-                            parent = parent.parentElement;
-                        }
-                    } else {
-                        node.classList.add('filtered-out');
-                        node.classList.remove('highlight');
-                    }
-                });
-            }, 200);
-        });
-    }
-
-    _buildTreeHTML(nodes, totalTickNs, depth) {
-        if (!nodes || nodes.length === 0) return '';
-
-        return nodes.map(node => {
-            const hasChildren = node.children && node.children.length > 0;
-            const pct = ((node.time / totalTickNs) * 100);
-            const avgMs = node.avg / 1_000_000;
-            const peakMs = node.peak / 1_000_000;
-
-            const indent = '\u00a0'.repeat(depth * 2);
-            const toggleClass = hasChildren ? '' : 'leaf';
-            const autoOpen = depth < 1 ? 'expanded' : '';
-            const childrenOpen = depth < 1 ? 'open' : '';
-
-            let violationHtml = '';
-            if (node.violations > 0) {
-                violationHtml = ` <span class="tree-node__violations">[${node.violations}v]</span>`;
-            }
-
-            const line = `<div class="tree-node" data-name="${this._escAttr(node.name)}">` +
-                `${indent}<button class="tree-node__toggle ${toggleClass} ${autoOpen}" aria-label="Toggle">\u25B6</button> ` +
-                `<span class="tree-node__name">${this._esc(node.name)}</span> ` +
-                `<span class="tree-node__pct">${pct.toFixed(1)}%</span> ` +
-                `<span class="tree-node__avg">${avgMs < 1 ? `${(node.avg / 1000).toFixed(0)}\u00b5s` : `${avgMs.toFixed(1)}ms`}</span> ` +
-                `<span class="tree-node__time">\u00d7${node.count.toLocaleString()}</span>` +
-                violationHtml +
-                (peakMs > 10 ? ` <span class="tree-node__peak">peak:${peakMs.toFixed(0)}ms</span>` : '') +
-                `</div>`;
-
-            const childrenHtml = hasChildren
-                ? `<div class="tree-children ${childrenOpen}">${this._buildTreeHTML(node.children, totalTickNs, depth + 1)}</div>`
-                : '';
-
-            return line + childrenHtml;
+    _tree(nodes, T, d) {
+        if (!nodes?.length) return '';
+        return nodes.map(n => {
+            const has = n.children?.length > 0, pct = (n.time / T) * 100, avg = n.avg / 1e6, pk = n.peak / 1e6;
+            const ind = '\u00a0'.repeat(d * 2), tc = has ? '' : 'leaf', ao = d < 1 ? 'expanded' : '', co = d < 1 ? 'open' : '';
+            let vh = n.violations > 0 ? ` <span class="tree-node__violations">[${n.violations}v]</span>` : '';
+            return `<div class="tree-node" data-name="${this._ea(n.name)}">${ind}<button class="tree-node__toggle ${tc} ${ao}">\u25B6</button> ` +
+                `<span class="tree-node__name">${this._e(n.name)}</span> <span class="tree-node__pct">${pct.toFixed(1)}%</span> ` +
+                `<span class="tree-node__avg">${avg < 1 ? `${(n.avg / 1e3).toFixed(0)}\u00b5s` : `${avg.toFixed(1)}ms`}</span> ` +
+                `<span class="tree-node__time">\u00d7${n.count.toLocaleString()}</span>${vh}` +
+                (pk > 10 ? ` <span class="tree-node__peak">peak:${pk.toFixed(0)}ms</span>` : '') + `</div>` +
+                (has ? `<div class="tree-children ${co}">${this._tree(n.children, T, d + 1)}</div>` : '');
         }).join('');
     }
+    _e(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    _ea(s) { return s.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+}
 
-    _esc(s) {
-        const d = document.createElement('div');
-        d.textContent = s;
-        return d.innerHTML;
-    }
+// ─── CORS Fetch ─────────────────────────────────────────────
 
-    _escAttr(s) {
-        return s.replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+async function fetchTimings(url) {
+    let raw = url.trim();
+    if (raw.includes('timings.pmmp.io') && !raw.includes('raw=1'))
+        raw += (raw.includes('?') ? '&' : '?') + 'raw=1';
+    try { const r = await fetch(raw, { signal: AbortSignal.timeout(8000) });
+        if (r.ok) { const t2 = await r.text(); if (t2.includes('Full Server Tick')) return t2; }
+    } catch (_) {}
+    const proxies = [
+        u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+        u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+        u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+        u => `https://api.cors.lol/?url=${encodeURIComponent(u)}`,
+    ];
+    for (const mk of proxies) {
+        try { const r = await fetch(mk(raw), { signal: AbortSignal.timeout(10000) });
+            if (!r.ok) continue; const t2 = await r.text();
+            if (t2.includes('Full Server Tick')) return t2;
+        } catch (_) { continue; }
     }
+    throw new Error('Could not fetch timings (CORS + all proxies failed). Open URL with &raw=1 in browser, copy text, paste here.');
 }
 
 // ─── Demo Data ──────────────────────────────────────────────
 
-const DEMO_TIMINGS = `Minecraft
+const DEMO = `Minecraft
     Full Server Tick Time: 8157000000 Count: 3200 Avg: 2549062.5 Violations: 15 RecordId: 100 ParentRecordId: none TimerId: 14 Ticks: 3200 Peak: 450000000
     Server Mid-Tick Processing Time: 1800000000 Count: 2800 Avg: 642857.14 Violations: 2 RecordId: 101 ParentRecordId: 100 TimerId: 16 Ticks: 3200 Peak: 200000000
         Snooze Handler: closure@pmsrc/src/network/mcpe/raklib/RakLibInterface#L104 Time: 1600000000 Count: 2600 Avg: 615384.61 Violations: 2 RecordId: 102 ParentRecordId: 101 TimerId: 179714 Ticks: 3100 Peak: 195000000
             Connection Handler Time: 1550000000 Count: 2600 Avg: 596153.84 Violations: 2 RecordId: 103 ParentRecordId: 102 TimerId: 20 Ticks: 3100 Peak: 194000000
                 Player Network Receive Time: 1400000000 Count: 8000 Avg: 175000.0 Violations: 2 RecordId: 104 ParentRecordId: 103 TimerId: 28 Ticks: 3100 Peak: 180000000
-                    Player Network Receive - Decryption Time: 60000000 Count: 8000 Avg: 7500.0 Violations: 0 RecordId: 105 ParentRecordId: 104 TimerId: 30 Ticks: 3100 Peak: 50000
                     Receive - PlayerAuthInputPacket Time: 1000000000 Count: 7800 Avg: 128205.12 Violations: 1 RecordId: 106 ParentRecordId: 104 TimerId: 854926 Ticks: 3100 Peak: 60000000
-                        Decode - PlayerAuthInputPacket Time: 50000000 Count: 7800 Avg: 6410.25 Violations: 0 RecordId: 107 ParentRecordId: 106 TimerId: 826642 Ticks: 3100 Peak: 50000
-                        Handler - PlayerAuthInputPacket Time: 200000000 Count: 7800 Avg: 25641.02 Violations: 0 RecordId: 108 ParentRecordId: 106 TimerId: 797474 Ticks: 3100 Peak: 15000000
     Server Tick Update Cycle Time: 6300000000 Count: 3200 Avg: 1968750.0 Violations: 10 RecordId: 200 ParentRecordId: 100 TimerId: 15 Ticks: 3200 Peak: 440000000
-        Scheduler Time: 300000000 Count: 3200 Avg: 93750.0 Violations: 1 RecordId: 201 ParentRecordId: 200 TimerId: 35 Ticks: 3200 Peak: 85000000
-            Scheduler - Sync Tasks Time: 200000000 Count: 5000 Avg: 40000.0 Violations: 1 RecordId: 202 ParentRecordId: 201 TimerId: 50 Ticks: 3200 Peak: 82000000
         Worlds - World Tick Time: 5000000000 Count: 6400 Avg: 781250.0 Violations: 5 RecordId: 300 ParentRecordId: 200 TimerId: 85079 Ticks: 3200 Peak: 45000000
             world - World Tick Time: 3200000000 Count: 3200 Avg: 1000000.0 Violations: 3 RecordId: 301 ParentRecordId: 300 TimerId: 85080 Ticks: 3200 Peak: 45000000
                 Worlds - Entity Tick Time: 1200000000 Count: 3200 Avg: 375000.0 Violations: 0 RecordId: 302 ParentRecordId: 301 TimerId: 85075 Ticks: 3200 Peak: 20000000
                     world - Entity Tick Time: 1200000000 Count: 3200 Avg: 375000.0 Violations: 0 RecordId: 303 ParentRecordId: 302 TimerId: 85076 Ticks: 3200 Peak: 20000000
                         Entity Tick - Player Time: 800000000 Count: 12000 Avg: 66666.66 Violations: 0 RecordId: 304 ParentRecordId: 303 TimerId: 804565 Ticks: 3200 Peak: 15000000
-                        Entity Tick - ItemEntity Time: 150000000 Count: 25000 Avg: 6000.0 Violations: 0 RecordId: 305 ParentRecordId: 303 TimerId: 930115 Ticks: 3200 Peak: 3000000
                         Entity Tick - phpcube\\entity\\type\\TenguBoss Time: 250000000 Count: 4000 Avg: 62500.0 Violations: 0 RecordId: 306 ParentRecordId: 303 TimerId: 930315 Ticks: 2000 Peak: 8000000
                 Worlds - Random Chunk Updates Time: 1400000000 Count: 3200 Avg: 437500.0 Violations: 0 RecordId: 307 ParentRecordId: 301 TimerId: 85069 Ticks: 3200 Peak: 35000000
-                    world - Random Chunk Updates Time: 1400000000 Count: 3200 Avg: 437500.0 Violations: 0 RecordId: 308 ParentRecordId: 307 TimerId: 85070 Ticks: 3200 Peak: 35000000
-                Worlds - Neighbour Block Updates Time: 300000000 Count: 3200 Avg: 93750.0 Violations: 0 RecordId: 309 ParentRecordId: 301 TimerId: 85067 Ticks: 3200 Peak: 8000000
-                    world - Neighbour Block Updates Time: 300000000 Count: 3200 Avg: 93750.0 Violations: 0 RecordId: 310 ParentRecordId: 309 TimerId: 85068 Ticks: 3200 Peak: 8000000
-            nether - World Tick Time: 80000000 Count: 3200 Avg: 25000.0 Violations: 0 RecordId: 311 ParentRecordId: 300 TimerId: 85169 Ticks: 3200 Peak: 2000000
             spawn - World Tick Time: 1600000000 Count: 3200 Avg: 500000.0 Violations: 2 RecordId: 312 ParentRecordId: 300 TimerId: 85293 Ticks: 3200 Peak: 20000000
-                Worlds - Entity Tick Time: 1000000000 Count: 3200 Avg: 312500.0 Violations: 0 RecordId: 313 ParentRecordId: 312 TimerId: 85075 Ticks: 3200 Peak: 18000000
-                    spawn - Entity Tick Time: 1000000000 Count: 3200 Avg: 312500.0 Violations: 0 RecordId: 314 ParentRecordId: 313 TimerId: 85295 Ticks: 3200 Peak: 18000000
-                        Entity Tick - Human Time: 400000000 Count: 30000 Avg: 13333.33 Violations: 0 RecordId: 315 ParentRecordId: 314 TimerId: 490702 Ticks: 3200 Peak: 5000000
-                        Entity Tick - Player Time: 500000000 Count: 8000 Avg: 62500.0 Violations: 0 RecordId: 316 ParentRecordId: 314 TimerId: 804565 Ticks: 3200 Peak: 12000000
-                Worlds - Random Chunk Updates Time: 200000000 Count: 3200 Avg: 62500.0 Violations: 0 RecordId: 317 ParentRecordId: 312 TimerId: 85069 Ticks: 3200 Peak: 5000000
-        Connection Handler Time: 600000000 Count: 3200 Avg: 187500.0 Violations: 0 RecordId: 400 ParentRecordId: 200 TimerId: 20 Ticks: 3200 Peak: 25000000
-            Player Network Send Time: 550000000 Count: 15000 Avg: 36666.66 Violations: 0 RecordId: 401 ParentRecordId: 400 TimerId: 21 Ticks: 3200 Peak: 20000000
         Memory Manager Time: 400000000 Count: 3200 Avg: 125000.0 Violations: 4 RecordId: 500 ParentRecordId: 200 TimerId: 17 Ticks: 3200 Peak: 390000000
             Cyclic Garbage Collector Time: 380000000 Count: 2 Avg: 190000000.0 Violations: 4 RecordId: 501 ParentRecordId: 500 TimerId: 74 Ticks: 2 Peak: 380000000
 Guardian v1.3.3
     veroxcode\\Guardian\\Listener\\EventListener->onPacketReceive(DataPacketReceiveEvent) Time: 400000000 Count: 8000 Avg: 50000.0 Violations: 0 RecordId: 600 ParentRecordId: 106 TimerId: 86781 Ticks: 3100 Peak: 5000000
-    veroxcode\\Guardian\\Listener\\EventListener->onPlayerMove(PlayerMoveEvent) Time: 200000000 Count: 5000 Avg: 40000.0 Violations: 0 RecordId: 601 ParentRecordId: 304 TimerId: 86798 Ticks: 3000 Peak: 8000000
 CubeTop v1.0.0
-    Task: phpcube\\task\\CubeHologramTask(interval:20) Time: 50000000 Count: 160 Avg: 312500.0 Violations: 1 RecordId: 700 ParentRecordId: 202 TimerId: 203911 Ticks: 160 Peak: 82000000
-NoviceQuests v1.0.0
-    Task: closure@plugins/NoviceQuests/src/NoviceQuests/NoviceQuests#L200(interval:40) Time: 20000000 Count: 80 Avg: 250000.0 Violations: 0 RecordId: 800 ParentRecordId: 202 TimerId: 300100 Ticks: 80 Peak: 5000000
+    Task: phpcube\\task\\CubeHologramTask(interval:20) Time: 50000000 Count: 160 Avg: 312500.0 Violations: 1 RecordId: 700 ParentRecordId: 200 TimerId: 203911 Ticks: 160 Peak: 82000000
 # Version v26.0
 # Obsidian Engine 5.41.2+dev
 Sample time 163000000000 (163.0s)`;
-
-// ─── CORS Proxy Fetch ───────────────────────────────────────
-
-async function fetchTimings(url) {
-    // Normalize URL to raw format
-    let rawUrl = url.trim();
-    if (rawUrl.includes('timings.pmmp.io') && !rawUrl.includes('raw=1')) {
-        rawUrl = rawUrl + (rawUrl.includes('?') ? '&' : '?') + 'raw=1';
-    }
-
-    // Try direct fetch first
-    try {
-        const resp = await fetch(rawUrl, { signal: AbortSignal.timeout(8000) });
-        if (resp.ok) {
-            const text = await resp.text();
-            if (text.includes('Full Server Tick')) return text;
-        }
-    } catch (_) { /* CORS blocked, try proxies */ }
-
-    // CORS proxy fallback list
-    const proxies = [
-        (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-        (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-        (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
-        (u) => `https://api.cors.lol/?url=${encodeURIComponent(u)}`,
-    ];
-
-    for (const makeProxy of proxies) {
-        try {
-            const proxyUrl = makeProxy(rawUrl);
-            const resp = await fetch(proxyUrl, { signal: AbortSignal.timeout(10000) });
-            if (!resp.ok) continue;
-            const text = await resp.text();
-            if (text.includes('Full Server Tick')) return text;
-        } catch (_) { continue; }
-    }
-
-    throw new Error(
-        'Could not fetch timings (CORS restriction + all proxies failed). ' +
-        'Open the URL with &raw=1 in your browser, copy all text, and paste it here.'
-    );
-}
 
 // ─── App Init ───────────────────────────────────────────────
 
@@ -908,14 +693,33 @@ document.addEventListener('DOMContentLoaded', () => {
     const parser = new TimingsParser();
     const analyzer = new TimingsAnalyzer();
     const ui = new TimingsUI();
-
-    // Pending files from file upload
     let pendingFiles = [];
 
-    // Tab switching
+    // i18n
+    function applyLang() {
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+            const key = el.dataset.i18n;
+            if (I18N[currentLang][key]) el.innerHTML = I18N[currentLang][key];
+        });
+        document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+            const key = el.dataset.i18nPlaceholder;
+            if (I18N[currentLang][key]) el.placeholder = I18N[currentLang][key];
+        });
+        const btn = document.getElementById('lang-toggle');
+        btn.textContent = currentLang === 'en' ? 'RU' : 'EN';
+        btn.classList.toggle('active-ru', currentLang === 'ru');
+    }
+    document.getElementById('lang-toggle').addEventListener('click', () => {
+        currentLang = currentLang === 'en' ? 'ru' : 'en';
+        localStorage.setItem('pmmp-lang', currentLang);
+        applyLang();
+    });
+    applyLang();
+
+    // Tabs
     document.querySelectorAll('.tab').forEach(tab => {
         tab.addEventListener('click', () => {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(t2 => t2.classList.remove('active'));
             document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
             tab.classList.add('active');
             document.getElementById(`tab-${tab.dataset.tab}`).classList.add('active');
@@ -923,141 +727,90 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // File drop
-    const dropZone = document.getElementById('file-drop');
-    const fileInput = document.getElementById('timings-file');
-
-    ['dragenter', 'dragover'].forEach(ev => {
-        dropZone.addEventListener(ev, (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
-    });
-    ['dragleave', 'drop'].forEach(ev => {
-        dropZone.addEventListener(ev, () => { dropZone.classList.remove('dragover'); });
-    });
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        handleFiles(Array.from(e.dataTransfer.files));
-    });
-    fileInput.addEventListener('change', () => {
-        if (fileInput.files.length > 0) handleFiles(Array.from(fileInput.files));
-    });
-
+    const drop = document.getElementById('file-drop'), fi = document.getElementById('timings-file');
+    ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('dragover'); }));
+    ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, () => drop.classList.remove('dragover')));
+    drop.addEventListener('drop', e => { e.preventDefault(); handleFiles(Array.from(e.dataTransfer.files)); });
+    fi.addEventListener('change', () => { if (fi.files.length) handleFiles(Array.from(fi.files)); });
     function handleFiles(files) {
         pendingFiles = files.filter(f => f.size > 0);
-        const names = pendingFiles.map(f => f.name).join(', ');
-        dropZone.querySelector('.file-drop__text').textContent =
-            pendingFiles.length === 1 ? `Loaded: ${names}` : `Loaded ${pendingFiles.length} files: ${names}`;
+        drop.querySelector('.file-drop__text').textContent =
+            pendingFiles.length === 1 ? `Loaded: ${pendingFiles[0].name}` : `${pendingFiles.length} files loaded`;
     }
 
-    // Analyze button
-    const btnAnalyze = document.getElementById('btn-analyze');
-    btnAnalyze.addEventListener('click', async () => {
-        btnAnalyze.classList.add('loading');
-        btnAnalyze.disabled = true;
-        clearError();
-
+    // Analyze
+    const btn = document.getElementById('btn-analyze');
+    btn.addEventListener('click', async () => {
+        btn.classList.add('loading'); btn.disabled = true; clearError();
         try {
-            const activeTab = document.querySelector('.tab.active').dataset.tab;
-            let timingsTexts = [];
+            const tab = document.querySelector('.tab.active').dataset.tab;
+            let texts = [], labels = [];
 
-            if (activeTab === 'paste') {
-                const text = document.getElementById('timings-text').value.trim();
-                if (!text) throw new Error('No timings data provided.');
-                // Split by === separator for multi-timings
-                timingsTexts = text.split(/\n\s*===\s*\n/).map(t => t.trim()).filter(Boolean);
-            } else if (activeTab === 'url') {
-                const urlText = document.getElementById('timings-url').value.trim();
-                if (!urlText) throw new Error('Please enter a timings URL');
-                const urls = urlText.split('\n').map(u => u.trim()).filter(Boolean);
-
+            if (tab === 'paste') {
+                const val = document.getElementById('timings-text').value.trim();
+                if (!val) throw new Error('No timings data provided.');
+                const parts = val.split(/\n\s*===\s*\n/).map(t2 => t2.trim()).filter(Boolean);
+                texts = parts;
+                labels = parts.length === 1 ? ['Report 1'] : parts.map((_, i) => `Report ${i + 1}`);
+            } else if (tab === 'url') {
+                const urlVal = document.getElementById('timings-url').value.trim();
+                if (!urlVal) throw new Error('Please enter a URL');
+                const urls = urlVal.split('\n').map(u => u.trim()).filter(Boolean);
                 for (let i = 0; i < urls.length; i++) {
-                    btnAnalyze.textContent = urls.length > 1
-                        ? `Fetching ${i + 1}/${urls.length}...`
-                        : 'Fetching...';
-                    const text = await fetchTimings(urls[i]);
-                    timingsTexts.push(text);
+                    btn.textContent = urls.length > 1 ? `${t('fetching')} ${i + 1}/${urls.length}...` : `${t('fetching')}...`;
+                    texts.push(await fetchTimings(urls[i]));
                 }
-                btnAnalyze.textContent = 'Analyze Timings';
-            } else if (activeTab === 'file') {
-                if (pendingFiles.length === 0) throw new Error('No files selected. Tap to select or drop .txt files.');
-                for (const file of pendingFiles) {
-                    const text = await readFileText(file);
-                    timingsTexts.push(text);
-                }
+                labels = urls.map((_, i) => `URL ${i + 1}`);
+                btn.textContent = t('btnAnalyze');
+            } else if (tab === 'file') {
+                if (!pendingFiles.length) throw new Error('No files selected.');
+                for (const f of pendingFiles) texts.push(await readFile(f));
+                labels = pendingFiles.map(f => f.name.replace(/\.[^.]+$/, ''));
             }
+            if (!texts.length) throw new Error('No timings data.');
+            for (let i = 0; i < texts.length; i++)
+                if (!texts[i].includes('Full Server Tick Time'))
+                    throw new Error(texts.length > 1 ? `${labels[i]}: Invalid format. Use raw timings (&raw=1).` : 'Invalid format. Use raw timings (&raw=1).');
 
-            if (timingsTexts.length === 0) throw new Error('No timings data provided.');
-
-            // Validate all
-            for (let i = 0; i < timingsTexts.length; i++) {
-                if (!timingsTexts[i].includes('Full Server Tick Time')) {
-                    throw new Error(
-                        timingsTexts.length > 1
-                            ? `Report ${i + 1}: Invalid timings format. Make sure you're using raw timings text (add &raw=1 to URL).`
-                            : 'Invalid timings format. Make sure you\'re using raw timings text (add &raw=1 to timings.pmmp.io URL).'
-                    );
-                }
-            }
-
-            // Parse & analyze all
             await new Promise(r => setTimeout(r, 50));
-            const reports = timingsTexts.map(text => {
-                const parsed = parser.parse(text);
-                const analysis = analyzer.analyze(parsed);
-                return { parsed, analysis };
+            const reports = texts.map(tx => { const p = parser.parse(tx); return { parsed: p, analysis: analyzer.analyze(p) }; });
+
+            // Try to extract better labels from meta
+            reports.forEach((r, i) => {
+                const v = r.analysis.meta.version;
+                if (v && labels[i].startsWith('Report ')) labels[i] = `Report ${i + 1} (${v})`;
             });
 
-            ui.renderMultiple(reports);
-
-        } catch (err) {
-            showError(err.message);
-        } finally {
-            btnAnalyze.classList.remove('loading');
-            btnAnalyze.disabled = false;
-            btnAnalyze.textContent = 'Analyze Timings';
-        }
+            ui.renderMultiple(reports, labels);
+        } catch (err) { showError(err.message); }
+        finally { btn.classList.remove('loading'); btn.disabled = false; btn.textContent = t('btnAnalyze'); }
     });
 
-    // Demo button
+    // Demo
     document.getElementById('btn-demo').addEventListener('click', () => {
-        document.getElementById('timings-text').value = DEMO_TIMINGS;
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.getElementById('timings-text').value = DEMO;
+        document.querySelectorAll('.tab').forEach(t2 => t2.classList.remove('active'));
         document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
         document.querySelector('[data-tab="paste"]').classList.add('active');
         document.getElementById('tab-paste').classList.add('active');
-        btnAnalyze.click();
+        btn.click();
     });
 
-    // New analysis button
+    // New analysis
     document.getElementById('btn-new').addEventListener('click', () => {
         document.getElementById('results').classList.add('hidden');
-        document.getElementById('hero').style.minHeight = '50vh';
-        document.getElementById('hero').style.paddingTop = '';
-        document.getElementById('hero').style.paddingBottom = '';
+        const hero = document.getElementById('hero');
+        hero.style.minHeight = '50vh'; hero.style.paddingTop = ''; hero.style.paddingBottom = '';
         document.getElementById('timings-text').value = '';
         document.getElementById('timings-url').value = '';
         pendingFiles = [];
-        const fileText = document.querySelector('.file-drop__text');
-        if (fileText) fileText.textContent = 'Tap to select or drop .txt files (multiple supported)';
+        const ft = document.querySelector('.file-drop__text');
+        if (ft) ft.textContent = t('fileDrop');
         window.scrollTo({ top: 0, behavior: 'smooth' });
     });
 
-    function readFileText(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
-            reader.readAsText(file);
-        });
-    }
-
-    function showError(msg) {
-        clearError();
-        const err = document.createElement('div');
-        err.className = 'error-msg';
-        err.textContent = msg;
-        document.querySelector('.input-group').appendChild(err);
-    }
-
-    function clearError() {
-        document.querySelectorAll('.error-msg').forEach(e => e.remove());
-    }
+    function readFile(f) { return new Promise((res, rej) => {
+        const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(new Error(`Read failed: ${f.name}`)); r.readAsText(f); }); }
+    function showError(msg) { clearError(); const e = document.createElement('div'); e.className = 'error-msg'; e.textContent = msg; document.querySelector('.input-group').appendChild(e); }
+    function clearError() { document.querySelectorAll('.error-msg').forEach(e => e.remove()); }
 });

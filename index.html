@@ -47,37 +47,40 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9889;</text></svg>">
 </head>
 <body>
+    <!-- Language toggle -->
+    <button class="lang-toggle" id="lang-toggle" title="Switch language">EN | RU</button>
+
     <!-- Hero / Input Section -->
     <header class="hero" id="hero">
         <div class="container">
             <h1 class="hero__title">&#9889; PMMP Timings Analyzer</h1>
-            <p class="hero__sub">Detect lag sources, GC spikes &amp; plugin bottlenecks in your <strong>PocketMine-MP</strong> server</p>
+            <p class="hero__sub" data-i18n="heroSub">Detect lag sources, GC spikes &amp; plugin bottlenecks in your <strong>PocketMine-MP</strong> server</p>
 
             <div class="input-group">
                 <div class="input-tabs">
-                    <button class="tab active" data-tab="paste">Paste Text</button>
-                    <button class="tab" data-tab="url">From URL</button>
-                    <button class="tab" data-tab="file">Upload Files</button>
+                    <button class="tab active" data-tab="paste" data-i18n="tabPaste">Paste Text</button>
+                    <button class="tab" data-tab="url" data-i18n="tabUrl">From URL</button>
+                    <button class="tab" data-tab="file" data-i18n="tabFile">Upload Files</button>
                 </div>
 
                 <div class="tab-panel active" id="tab-paste">
-                    <textarea id="timings-text" placeholder="Paste your raw timings text here...&#10;&#10;Multiple reports: separate with a line containing only ===&#10;&#10;Get raw text: timings.pmmp.io → your report → add &amp;raw=1 to URL" rows="6" spellcheck="false"></textarea>
+                    <textarea id="timings-text" data-i18n-placeholder="pastePlaceholder" placeholder="Paste your raw timings text here...&#10;&#10;Multiple reports: separate with a line containing only ===&#10;&#10;Get raw text: timings.pmmp.io -> your report -> add &amp;raw=1 to URL" rows="6" spellcheck="false"></textarea>
                 </div>
 
                 <div class="tab-panel" id="tab-url">
-                    <textarea id="timings-url" rows="3" placeholder="https://timings.pmmp.io/?id=...&amp;access_token=...&#10;&#10;One URL per line for batch analysis" spellcheck="false"></textarea>
-                    <p class="hint">We'll fetch raw data automatically via CORS proxy. Paste one URL per line to analyze multiple reports.</p>
+                    <textarea id="timings-url" rows="3" data-i18n-placeholder="urlPlaceholder" placeholder="https://timings.pmmp.io/?id=...&amp;access_token=...&#10;&#10;One URL per line for batch analysis" spellcheck="false"></textarea>
+                    <p class="hint" data-i18n="urlHint">We'll fetch raw data automatically via CORS proxy. Paste one URL per line to analyze multiple reports.</p>
                 </div>
 
                 <div class="tab-panel" id="tab-file">
                     <label class="file-drop" id="file-drop">
                         <input type="file" id="timings-file" accept=".txt,.log,.timings" multiple>
-                        <span class="file-drop__text">Tap to select or drop .txt files (multiple supported)</span>
+                        <span class="file-drop__text" data-i18n="fileDrop">Tap to select or drop .txt files (multiple supported)</span>
                     </label>
                 </div>
 
-                <button class="btn-analyze" id="btn-analyze">Analyze Timings</button>
-                <button class="btn-demo" id="btn-demo">Try Demo</button>
+                <button class="btn-analyze" id="btn-analyze" data-i18n="btnAnalyze">Analyze Timings</button>
+                <button class="btn-demo" id="btn-demo" data-i18n="btnDemo">Try Demo</button>
             </div>
         </div>
     </header>
@@ -85,15 +88,18 @@
     <!-- Results -->
     <main class="results hidden" id="results">
         <div class="container">
-            <!-- Multi-report tabs (hidden for single report) -->
+            <!-- Aggregate summary (shown for multi-report) -->
+            <div class="aggregate hidden" id="aggregate"></div>
+
+            <!-- Report tabs (multi-report) -->
             <div class="report-tabs hidden" id="report-tabs"></div>
 
-            <!-- Report containers are generated dynamically -->
+            <!-- Report containers -->
             <div id="reports-container"></div>
 
             <!-- New Analysis -->
             <div class="new-analysis">
-                <button class="btn-analyze" id="btn-new">New Analysis</button>
+                <button class="btn-analyze" id="btn-new" data-i18n="btnNew">New Analysis</button>
             </div>
         </div>
     </main>
