@@ -605,15 +605,11 @@ class TimingsUI {
             tv.querySelectorAll('.tree-node__toggle:not(.leaf)').forEach(x => x.classList.add('expanded')); };
         this._el(c, 'ca').onclick = () => { tv.querySelectorAll('.tree-children').forEach(x => x.classList.remove('open'));
             tv.querySelectorAll('.tree-node__toggle').forEach(x => x.classList.remove('expanded')); };
+        // The tree is static until the next report render: cache labels and nodes once.
+        const filterTree = createTreeFilter(tv);
         let st; this._el(c, 'ts').oninput = e => { clearTimeout(st); st = setTimeout(() => {
             const q = e.target.value.toLowerCase().trim();
-            tv.querySelectorAll('.tree-node').forEach(nd => { const nm = (nd.dataset.name || '').toLowerCase();
-                if (!q) { nd.classList.remove('filtered-out', 'highlight'); }
-                else if (nm.includes(q)) { nd.classList.remove('filtered-out'); nd.classList.add('highlight');
-                    let p = nd.parentElement; while (p && p !== tv) { if (p.classList.contains('tree-children')) {
-                        p.classList.add('open'); p.previousElementSibling?.querySelector('.tree-node__toggle')?.classList.add('expanded'); }
-                        p = p.parentElement; } }
-                else { nd.classList.add('filtered-out'); nd.classList.remove('highlight'); } });
+            filterTree(q);
         }, 200); };
     }
 
@@ -636,6 +632,37 @@ class TimingsUI {
 }
 
 // ─── CORS Fetch ─────────────────────────────────────────────
+
+function createTreeFilter(tv) {
+    const nodes = Array.from(tv.querySelectorAll('.tree-node'), node => ({
+        node, name: (node.dataset.name || '').toLowerCase()
+    }));
+    return q => {
+        const opened = new Set();
+        for (const { node, name } of nodes) {
+            if (!q) {
+                node.classList.remove('filtered-out', 'highlight');
+            } else if (name.includes(q)) {
+                node.classList.remove('filtered-out');
+                node.classList.add('highlight');
+                let parent = node.parentElement;
+                while (parent && parent !== tv) {
+                    // An already visited ancestor's entire path has been opened.
+                    if (opened.has(parent)) break;
+                    opened.add(parent);
+                    if (parent.classList.contains('tree-children')) {
+                        parent.classList.add('open');
+                        parent.previousElementSibling?.querySelector('.tree-node__toggle')?.classList.add('expanded');
+                    }
+                    parent = parent.parentElement;
+                }
+            } else {
+                node.classList.add('filtered-out');
+                node.classList.remove('highlight');
+            }
+        }
+    };
+}
 
 async function fetchTimings(url) {
     let raw = url.trim();
@@ -814,3 +841,4 @@ document.addEventListener('DOMContentLoaded', () => {
     function showError(msg) { clearError(); const e = document.createElement('div'); e.className = 'error-msg'; e.textContent = msg; document.querySelector('.input-group').appendChild(e); }
     function clearError() { document.querySelectorAll('.error-msg').forEach(e => e.remove()); }
 });
+
